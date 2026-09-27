@@ -711,15 +711,66 @@ def analyze_uploaded_video(video_bytes):
             )
 
         # Extract audio
-        audio, sr = librosa.load(
-            temp_path,
-            sr=AUDIO_SR,
-            mono=True,
-        )
+        def decode_audio_from_video(video_path):
+
+            with av.open(video_path) as container:
+
+                audio_streams = container.streams.audio
+
+                if not audio_streams:
+                    raise ValueError(
+                        "The uploaded video does not contain an audio stream."
+                    )
+
+                audio_stream = audio_streams[0]
+
+                resampler = av.audio.resampler.AudioResampler(
+                    format="flt",
+                    layout="mono",
+                    rate=AUDIO_SR,
+                )
+
+                chunks = []
+
+                def append_chunk(audio_frame):
+
+                    chunk = audio_frame.to_ndarray()
+                    chunk = np.asarray(chunk, dtype=np.float32)
+
+                    if chunk.ndim == 2:
+                        if chunk.shape[0] == 1:
+                            chunk = chunk[0]
+                        else:
+                            chunk = np.mean(chunk, axis=0)
+                    else:
+                        chunk = chunk.reshape(-1)
+
+                    if chunk.size > 0:
+                        chunks.append(chunk)
+
+                for frame in container.decode(audio=audio_stream.index):
+
+                    for resampled in resampler.resample(frame):
+                        append_chunk(resampled)
+
+                for resampled in resampler.resample(None):
+                    append_chunk(resampled)
+
+                if not chunks:
+                    raise ValueError(
+                        "Could not decode audio from the uploaded video."
+                    )
+
+                return np.concatenate(chunks).astype(
+                    np.float32,
+                    copy=False,
+                )
+
+        audio = decode_audio_from_video(temp_path)
 
         voice_feature = extract_voice_features(
             audio,
-            sr,
+            AUDIO_SR,
         )
 
         face_probability = predict_face(
