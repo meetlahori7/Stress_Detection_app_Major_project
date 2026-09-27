@@ -748,10 +748,12 @@ def analyze_uploaded_video(video_bytes):
                     if chunk.size > 0:
                         chunks.append(chunk)
 
-                for frame in container.decode(audio=audio_stream.index):
+                for packet in container.demux(audio_stream):
 
-                    for resampled in resampler.resample(frame):
-                        append_chunk(resampled)
+                    for frame in packet.decode():
+
+                        for resampled in resampler.resample(frame):
+                            append_chunk(resampled)
 
                 for resampled in resampler.resample(None):
                     append_chunk(resampled)
