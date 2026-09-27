@@ -1,0 +1,13 @@
+streamlit
+streamlit-webrtc
+av
+numpy
+pandas
+scikit-learn
+joblib
+librosa
+soundfile
+torch
+torchvision
+Pillow
+opencv-contrib-python==4.10.0.84

@@ -1,0 +1,9 @@
+{
+    "face_weight": 0.4,
+    "voice_weight": 0.6,
+    "threshold": 0.5,
+    "face_feature_dimension": 512,
+    "voice_feature_dimension": 240,
+    "face_classifier": "MLPClassifier",
+    "voice_classifier": "LogisticRegression"
+}
