@@ -142,11 +142,21 @@ st.markdown(
         font-size: 30px;
         font-weight: 800;
         margin-bottom: 5px;
+        color: #111827;
     }
 
     .result-subtitle {
-        color: #6b7280;
+        color: #374151;
         font-size: 14px;
+        font-weight: 600;
+    }
+
+    .result-stress .result-title {
+        color: #991b1b;
+    }
+
+    .result-safe .result-title {
+        color: #065f46;
     }
 
     .section-title {
