@@ -1,0 +1,341 @@
+<!-- Three.js CDN -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+<script>
+(function() {
+  'use strict';
+
+  // Prevent multiple initializations across Streamlit script reruns
+  if (window.__lab3dActive && document.getElementById('three-bg-canvas')) {
+    return;
+  }
+  window.__lab3dActive = true;
+
+  // 1. Create canvas outside React tree and prepend to document.body (before #root)
+  let canvas = document.getElementById('three-bg-canvas');
+  if (!canvas) {
+    canvas = document.createElement('canvas');
+    canvas.id = 'three-bg-canvas';
+    canvas.style.cssText = 'position:fixed;top:0;left:0;width:100vw;height:100vh;z-index:0;pointer-events:none;display:block;';
+    document.body.prepend(canvas);
+  }
+
+  const prefersReduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const getW = () => window.innerWidth || document.documentElement.clientWidth || 1920;
+  const getH = () => window.innerHeight || document.documentElement.clientHeight || 1080;
+
+  // 2. Initialize Three.js scene (or Canvas fallback)
+  function start() {
+    if (window.THREE) {
+      initThree();
+    } else {
+      let tries = 0;
+      const t = setInterval(() => {
+        tries++;
+        if (window.THREE) {
+          clearInterval(t);
+          initThree();
+        } else if (tries > 25) {
+          clearInterval(t);
+          initFallback();
+        }
+      }, 100);
+    }
+  }
+
+  function initThree() {
+    let width = getW();
+    let height = getH();
+
+    const renderer = new THREE.WebGLRenderer({
+      canvas: canvas,
+      antialias: false,
+      alpha: false,
+      powerPreference: 'low-power'
+    });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
+    renderer.setSize(width, height);
+    renderer.setClearColor(0x0a0e17, 1);
+
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.FogExp2(0x0a0e17, 0.0016);
+
+    const camera = new THREE.PerspectiveCamera(55, width / height, 1, 2000);
+    camera.position.set(0, 0, 420);
+
+    const TEAL = new THREE.Color(0x2dd4bf);
+    const AMBER = new THREE.Color(0xf59e0b);
+    const DIM = new THREE.Color(0x1e293b);
+
+    const PARTICLE_COUNT = 150;
+    const SPREAD = 560;
+
+    const positions = new Float32Array(PARTICLE_COUNT * 3);
+    const colors = new Float32Array(PARTICLE_COUNT * 3);
+    const velocities = [];
+
+    for (let i = 0; i < PARTICLE_COUNT; i++) {
+      const i3 = i * 3;
+      positions[i3] = (Math.random() - 0.5) * SPREAD;
+      positions[i3 + 1] = (Math.random() - 0.5) * SPREAD;
+      positions[i3 + 2] = (Math.random() - 0.5) * SPREAD * 0.5;
+
+      const r = Math.random();
+      let c = DIM;
+      if (r < 0.20) c = TEAL;
+      else if (r < 0.28) c = AMBER;
+
+      colors[i3] = c.r;
+      colors[i3 + 1] = c.g;
+      colors[i3 + 2] = c.b;
+
+      velocities.push({
+        x: (Math.random() - 0.5) * 0.16,
+        y: (Math.random() - 0.5) * 0.16,
+        z: (Math.random() - 0.5) * 0.08
+      });
+    }
+
+    const pointGeo = new THREE.BufferGeometry();
+    pointGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    pointGeo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+    const pointMat = new THREE.PointsMaterial({
+      size: 3.2,
+      vertexColors: true,
+      transparent: true,
+      opacity: 0.8,
+      sizeAttenuation: true,
+      depthWrite: false
+    });
+
+    const points = new THREE.Points(pointGeo, pointMat);
+    scene.add(points);
+
+    // Connecting synaptic filaments
+    const LINE_DIST = 115;
+    const MAX_LINES = 350;
+    const linePositions = new Float32Array(MAX_LINES * 6);
+    const lineColors = new Float32Array(MAX_LINES * 6);
+
+    const lineGeo = new THREE.BufferGeometry();
+    lineGeo.setAttribute('position', new THREE.BufferAttribute(linePositions, 3));
+    lineGeo.setAttribute('color', new THREE.BufferAttribute(lineColors, 3));
+    lineGeo.setDrawRange(0, 0);
+
+    const lineMat = new THREE.LineBasicMaterial({
+      vertexColors: true,
+      transparent: true,
+      opacity: 0.35,
+      depthWrite: false
+    });
+
+    const lines = new THREE.LineSegments(lineGeo, lineMat);
+    scene.add(lines);
+
+    // Expanding neural rings
+    const rings = [];
+    const RING_MAT = new THREE.MeshBasicMaterial({
+      color: TEAL,
+      transparent: true,
+      opacity: 0.08,
+      wireframe: true,
+      depthWrite: false
+    });
+
+    function spawnRing() {
+      const geo = new THREE.TorusGeometry(1, 0.2, 4, 32);
+      const mesh = new THREE.Mesh(geo, RING_MAT.clone());
+      mesh.position.set(
+        (Math.random() - 0.5) * 280,
+        (Math.random() - 0.5) * 280,
+        (Math.random() - 0.5) * 80
+      );
+      mesh.rotation.x = Math.random() * Math.PI;
+      mesh.rotation.y = Math.random() * Math.PI;
+      mesh.userData = { age: 0, maxAge: 240 + Math.random() * 160 };
+      if (Math.random() > 0.65) mesh.material.color = AMBER;
+      scene.add(mesh);
+      rings.push(mesh);
+    }
+    for (let i = 0; i < 3; i++) spawnRing();
+
+    function updateParticles() {
+      const pos = pointGeo.attributes.position.array;
+      for (let i = 0; i < PARTICLE_COUNT; i++) {
+        const i3 = i * 3;
+        const v = velocities[i];
+        pos[i3] += v.x;
+        pos[i3 + 1] += v.y;
+        pos[i3 + 2] += v.z;
+
+        const half = SPREAD * 0.5;
+        if (pos[i3] > half) pos[i3] = -half;
+        if (pos[i3] < -half) pos[i3] = half;
+        if (pos[i3 + 1] > half) pos[i3 + 1] = -half;
+        if (pos[i3 + 1] < -half) pos[i3 + 1] = half;
+        if (pos[i3 + 2] > half * 0.5) pos[i3 + 2] = -half * 0.5;
+        if (pos[i3 + 2] < -half * 0.5) pos[i3 + 2] = half * 0.5;
+      }
+      pointGeo.attributes.position.needsUpdate = true;
+    }
+
+    function updateLines() {
+      const pos = pointGeo.attributes.position.array;
+      const lp = lineGeo.attributes.position.array;
+      const lc = lineGeo.attributes.color.array;
+      let seg = 0;
+
+      for (let i = 0; i < PARTICLE_COUNT && seg < MAX_LINES; i++) {
+        for (let j = i + 1; j < PARTICLE_COUNT && seg < MAX_LINES; j++) {
+          const i3 = i * 3, j3 = j * 3;
+          const dx = pos[i3] - pos[j3];
+          const dy = pos[i3 + 1] - pos[j3 + 1];
+          const dz = pos[i3 + 2] - pos[j3 + 2];
+          const d2 = dx * dx + dy * dy + dz * dz;
+
+          if (d2 < LINE_DIST * LINE_DIST) {
+            const s6 = seg * 6;
+            lp[s6] = pos[i3]; lp[s6 + 1] = pos[i3 + 1]; lp[s6 + 2] = pos[i3 + 2];
+            lp[s6 + 3] = pos[j3]; lp[s6 + 4] = pos[j3 + 1]; lp[s6 + 5] = pos[j3 + 2];
+
+            const alpha = 1 - Math.sqrt(d2) / LINE_DIST;
+            const r = 0.176 * alpha, g = 0.831 * alpha, b = 0.749 * alpha;
+            lc[s6] = r; lc[s6 + 1] = g; lc[s6 + 2] = b;
+            lc[s6 + 3] = r; lc[s6 + 4] = g; lc[s6 + 5] = b;
+            seg++;
+          }
+        }
+      }
+      lineGeo.setDrawRange(0, seg * 2);
+      lineGeo.attributes.position.needsUpdate = true;
+      lineGeo.attributes.color.needsUpdate = true;
+    }
+
+    function updateRings() {
+      for (let i = rings.length - 1; i >= 0; i--) {
+        const ring = rings[i];
+        ring.userData.age++;
+        const t = ring.userData.age / ring.userData.maxAge;
+        const scale = 1 + t * 70;
+        ring.scale.set(scale, scale, scale);
+        ring.material.opacity = 0.08 * (1 - t);
+        ring.rotation.z += 0.002;
+        if (t >= 1) {
+          scene.remove(ring);
+          ring.geometry.dispose();
+          ring.material.dispose();
+          rings.splice(i, 1);
+        }
+      }
+      if (rings.length < 4 && Math.random() < 0.007) spawnRing();
+    }
+
+    let elapsed = 0;
+    function updateCamera() {
+      elapsed += 0.0025;
+      camera.position.x = Math.sin(elapsed * 0.3) * 25;
+      camera.position.y = Math.cos(elapsed * 0.25) * 15;
+      camera.lookAt(0, 0, 0);
+    }
+
+    function animate() {
+      requestAnimationFrame(animate);
+      updateParticles();
+      updateLines();
+      updateRings();
+      updateCamera();
+      renderer.render(scene, camera);
+    }
+
+    if (!prefersReduced) {
+      animate();
+    } else {
+      renderer.render(scene, camera);
+    }
+
+    window.addEventListener('resize', () => {
+      width = getW();
+      height = getH();
+      camera.aspect = width / height;
+      camera.updateProjectionMatrix();
+      renderer.setSize(width, height);
+      if (prefersReduced) renderer.render(scene, camera);
+    });
+  }
+
+  function initFallback() {
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    let w = (canvas.width = getW());
+    let h = (canvas.height = getH());
+
+    const numNodes = 70;
+    const nodes = [];
+    for (let i = 0; i < numNodes; i++) {
+      const isTeal = Math.random() < 0.25;
+      const isAmber = !isTeal && Math.random() < 0.12;
+      nodes.push({
+        x: Math.random() * w,
+        y: Math.random() * h,
+        vx: (Math.random() - 0.5) * 0.35,
+        vy: (Math.random() - 0.5) * 0.35,
+        r: Math.random() * 2 + 1.2,
+        color: isTeal ? '#2dd4bf' : (isAmber ? '#f59e0b' : '#334155'),
+        alpha: isTeal ? 0.75 : (isAmber ? 0.65 : 0.35)
+      });
+    }
+
+    function draw() {
+      ctx.fillStyle = '#0a0e17';
+      ctx.fillRect(0, 0, w, h);
+
+      for (let i = 0; i < numNodes; i++) {
+        for (let j = i + 1; j < numNodes; j++) {
+          const dx = nodes[i].x - nodes[j].x;
+          const dy = nodes[i].y - nodes[j].y;
+          const d = Math.sqrt(dx * dx + dy * dy);
+          if (d < 125) {
+            const alpha = (1 - d / 125) * 0.22;
+            ctx.strokeStyle = `rgba(45, 212, 191, ${alpha})`;
+            ctx.lineWidth = 0.8;
+            ctx.beginPath();
+            ctx.moveTo(nodes[i].x, nodes[i].y);
+            ctx.lineTo(nodes[j].x, nodes[j].y);
+            ctx.stroke();
+          }
+        }
+      }
+
+      for (let i = 0; i < numNodes; i++) {
+        const n = nodes[i];
+        if (!prefersReduced) {
+          n.x += n.vx;
+          n.y += n.vy;
+          if (n.x < 0) n.x = w; if (n.x > w) n.x = 0;
+          if (n.y < 0) n.y = h; if (n.y > h) n.y = 0;
+        }
+        ctx.fillStyle = n.color;
+        ctx.globalAlpha = n.alpha;
+        ctx.beginPath();
+        ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = 1.0;
+      }
+
+      if (!prefersReduced) {
+        requestAnimationFrame(draw);
+      }
+    }
+    draw();
+
+    window.addEventListener('resize', () => {
+      w = canvas.width = getW();
+      h = canvas.height = getH();
+      if (prefersReduced) draw();
+    });
+  }
+
+  start();
+})();
+</script>

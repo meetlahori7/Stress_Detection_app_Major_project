@@ -11,3 +11,4 @@ torch
 torchvision
 Pillow
 opencv-python-headless
+onnxruntime

@@ -8,12 +8,12 @@ import cv2
 import joblib
 import librosa
 import numpy as np
+import onnxruntime as ort
 import streamlit as st
 import torch
 import torchvision.transforms as transforms
 
 from PIL import Image
-from sklearn.preprocessing import StandardScaler
 from torchvision.models import resnet18
 from streamlit_webrtc import webrtc_streamer, WebRtcMode
 
@@ -52,6 +52,47 @@ THRESHOLD = 0.50
 AUDIO_SR = 16000
 AUDIO_WINDOW_SECONDS = 3.0
 
+# Local open-source facial-expression verification model.
+# Advisory only: this branch NEVER changes the stress prediction.
+FER_MODEL_PATH = os.path.join(
+    MODEL_DIR, "fer", "emotion-ferplus-8.onnx"
+)
+
+# Emotion FERPlus output order documented by the ONNX model:
+# neutral, happiness, surprise, sadness, anger, disgust, fear, contempt.
+FER_LABELS = [
+    "neutral",
+    "happy",
+    "surprise",
+    "sad",
+    "angry",
+    "disgust",
+    "fear",
+    "contempt",
+]
+
+# Project-grounded local retrieval knowledge base.
+# This is deterministic retrieval, not an external LLM call.
+RAG_DOCUMENTS = [
+    "The stress classifier uses facial ResNet18 features and voice MFCC features.",
+    "The final stress prediction uses late fusion with 40 percent face probability and 60 percent voice probability.",
+    "The stress decision threshold is 0.50. This project uses emotion-derived proxy labels, not clinically validated stress labels.",
+    "Facial-expression recognition identifies visible expressions such as happy, sad, angry, fear, disgust, surprise, neutral and contempt. Expression is not the same thing as a person's actual emotional or stress state.",
+    "A disagreement between the stress classifier and facial-expression verifier should be reported as a modality or label disagreement, not used to overwrite the stress prediction.",
+    "Happy or neutral facial expression can coexist with stress signals from voice or other modalities. Angry, fearful or disgust expressions can also occur without actual stress.",
+    "Sad and surprise are treated as ambiguous for binary stress consistency checking because they do not provide a reliable binary stress decision.",
+]
+
+def _tokenize(text):
+    return [
+        token.strip(".,:;!?()[]{}").lower()
+        for token in text.split()
+        if token.strip(".,:;!?()[]{}")
+    ]
+
+RAG_DOCUMENT_TOKENS = [_tokenize(doc) for doc in RAG_DOCUMENTS]
+
+
 # ============================================================
 # PAGE CONFIG
 # ============================================================
@@ -68,109 +109,23 @@ st.set_page_config(
 # CUSTOM CSS
 # ============================================================
 
+# ---- Load external UI assets ----
+UI_DIR = os.path.join(BASE_DIR, "ui")
+
+def _read_ui_file(filename):
+    path = os.path.join(UI_DIR, filename)
+    with open(path, "r", encoding="utf-8") as f:
+        return f.read()
+
+# 1. Inject Stylesheet
 st.markdown(
-    """
-    <style>
-
-    .main {
-        background-color: #f7f9fc;
-    }
-
-    .block-container {
-        padding-top: 1.5rem;
-        padding-bottom: 2rem;
-        max-width: 1250px;
-    }
-
-    .hero {
-        padding: 25px 30px;
-        border-radius: 18px;
-        background: linear-gradient(135deg, #111827, #1f2937);
-        color: white;
-        margin-bottom: 25px;
-    }
-
-    .hero h1 {
-        margin-bottom: 5px;
-        font-size: 34px;
-    }
-
-    .hero p {
-        margin: 0;
-        color: #d1d5db;
-        font-size: 16px;
-    }
-
-    .metric-card {
-        padding: 20px;
-        border-radius: 15px;
-        background: white;
-        border: 1px solid #e5e7eb;
-        text-align: center;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.04);
-    }
-
-    .metric-title {
-        font-size: 14px;
-        color: #6b7280;
-        margin-bottom: 8px;
-    }
-
-    .metric-value {
-        font-size: 27px;
-        font-weight: 700;
-        color: #111827;
-    }
-
-    .result-stress {
-        padding: 22px;
-        border-radius: 16px;
-        background: #fff1f2;
-        border: 1px solid #fecdd3;
-        text-align: center;
-    }
-
-    .result-safe {
-        padding: 22px;
-        border-radius: 16px;
-        background: #ecfdf5;
-        border: 1px solid #a7f3d0;
-        text-align: center;
-    }
-
-    .result-title {
-        font-size: 30px;
-        font-weight: 800;
-        margin-bottom: 5px;
-        color: #111827;
-    }
-
-    .result-subtitle {
-        color: #374151;
-        font-size: 14px;
-        font-weight: 600;
-    }
-
-    .result-stress .result-title {
-        color: #991b1b;
-    }
-
-    .result-safe .result-title {
-        color: #065f46;
-    }
-
-    .section-title {
-        font-size: 22px;
-        font-weight: 700;
-        margin-top: 15px;
-        margin-bottom: 12px;
-        color: #111827;
-    }
-
-    </style>
-    """,
+    f"<style>\n{_read_ui_file('styles.css')}\n</style>",
     unsafe_allow_html=True,
 )
+
+# 2. Inject 3D WebGL Background directly into the page DOM
+_bg_html = _read_ui_file("background.html")
+st.html(_bg_html, unsafe_allow_javascript=True)
 
 
 # ============================================================
@@ -179,10 +134,13 @@ st.markdown(
 
 st.markdown(
     """
-    <div class="hero">
-        <h1>🧠 AI Human Stress Detection</h1>
+    <div class="hero-lab">
+        <span class="hero-tag">Multimodal AI</span>
+        <span class="hero-tag">Late Fusion</span>
+        <h1>Human Stress Detection</h1>
         <p>
-            Multimodal facial + voice analysis using deep learning and late fusion
+            Facial &amp; voice signal analysis using deep learning —
+            ResNet-18 encoder · MFCC extraction · probabilistic fusion
         </p>
     </div>
     """,
@@ -251,6 +209,45 @@ def load_classifier():
 
 
 @st.cache_resource
+def load_fer_model():
+    """Load the local Emotion FERPlus ONNX model once."""
+    if not os.path.exists(FER_MODEL_PATH):
+        raise FileNotFoundError(
+            "Facial-expression model not found:\n"
+            f"{FER_MODEL_PATH}\n\n"
+            "Place emotion-ferplus-8.onnx in models/fer/."
+        )
+
+    session_options = ort.SessionOptions()
+    session_options.graph_optimization_level = (
+        ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+    )
+
+    session = ort.InferenceSession(
+        FER_MODEL_PATH,
+        sess_options=session_options,
+        providers=["CPUExecutionProvider"],
+    )
+
+    inputs = session.get_inputs()
+    outputs = session.get_outputs()
+
+    if not inputs:
+        raise RuntimeError("FER ONNX model has no input tensor.")
+    if not outputs:
+        raise RuntimeError("FER ONNX model has no output tensor.")
+
+    input_shape = inputs[0].shape
+    if len(input_shape) != 4:
+        raise RuntimeError(
+            f"Unexpected FER input shape: {input_shape}. "
+            "Expected N x 1 x 64 x 64."
+        )
+
+    return session
+
+
+@st.cache_resource
 def load_preprocessing():
 
     return transforms.Compose(
@@ -266,14 +263,13 @@ def load_preprocessing():
 
 
 try:
-
     yunet = load_yunet()
     face_encoder = load_face_encoder()
     classifier_package = load_classifier()
     face_transform = load_preprocessing()
+    fer_session = load_fer_model()
 
 except Exception as e:
-
     st.error("Model loading failed.")
     st.code(str(e))
     st.stop()
@@ -297,6 +293,7 @@ with st.sidebar:
     st.write("🧠 ResNet18 Face Encoder")
     st.write("🎙️ MFCC Voice Features")
     st.write("🔗 Late Fusion")
+    st.write("🙂 FERPlus Expression Verification")
 
     st.divider()
 
@@ -539,6 +536,189 @@ def final_prediction(probability):
 
 
 # ============================================================
+# FACIAL-EXPRESSION VERIFICATION + RAG
+# ============================================================
+
+def _softmax(scores):
+    scores = np.asarray(scores, dtype=np.float32).reshape(-1)
+    scores = scores - np.max(scores)
+    exp_scores = np.exp(scores)
+    return exp_scores / np.sum(exp_scores)
+
+
+def verify_facial_expression(face_bgr):
+    """
+    Predict visible facial expression using local Emotion FERPlus ONNX.
+
+    This branch is advisory only. It never changes the trained stress
+    probabilities or the 40/60 fusion decision.
+    """
+    if face_bgr is None or face_bgr.size == 0:
+        return None
+
+    gray = cv2.cvtColor(face_bgr, cv2.COLOR_BGR2GRAY)
+    gray = cv2.resize(
+        gray,
+        (64, 64),
+        interpolation=cv2.INTER_AREA,
+    )
+
+    # FERPlus expects N x 1 x 64 x 64.
+    input_tensor = gray.astype(np.float32)[None, None, :, :]
+    input_name = fer_session.get_inputs()[0].name
+
+    try:
+        outputs = fer_session.run(
+            None,
+            {input_name: input_tensor},
+        )
+    except Exception as exc:
+        st.warning(
+            "Facial-expression verification unavailable. "
+            f"Stress prediction is unchanged. ({exc})"
+        )
+        return None
+
+    if not outputs:
+        return None
+
+    probabilities = _softmax(outputs[0])
+
+    if probabilities.shape[0] != len(FER_LABELS):
+        raise RuntimeError(
+            "FER model output does not contain 8 emotion scores. "
+            f"Received shape: {np.asarray(outputs[0]).shape}"
+        )
+
+    emotion_probabilities = {
+        label: float(probabilities[index])
+        for index, label in enumerate(FER_LABELS)
+    }
+
+    top_emotion = max(
+        emotion_probabilities,
+        key=emotion_probabilities.get,
+    )
+
+    return {
+        "top_emotion": top_emotion,
+        "probabilities": emotion_probabilities,
+    }
+
+
+def retrieve_rag_context(query, top_k=3):
+    """Retrieve the most relevant project-grounded facts locally."""
+    query_tokens = set(_tokenize(query))
+
+    if not query_tokens:
+        return []
+
+    scored = []
+
+    for index, tokens in enumerate(RAG_DOCUMENT_TOKENS):
+        overlap = len(query_tokens.intersection(tokens))
+
+        if overlap:
+            scored.append((overlap, index))
+
+    scored.sort(key=lambda item: (-item[0], item[1]))
+
+    return [
+        RAG_DOCUMENTS[index]
+        for _, index in scored[:top_k]
+    ]
+
+
+def build_grounded_explanation(
+    fusion_probability,
+    expression_result=None,
+):
+    stress_detected = fusion_probability >= THRESHOLD
+
+    emotion = (
+        expression_result["top_emotion"]
+        if expression_result
+        else "unknown"
+    )
+
+    query = (
+        f"stress probability {fusion_probability:.2f} "
+        f"facial expression {emotion} "
+        "modality disagreement emotion derived stress proxy"
+    )
+
+    context = retrieve_rag_context(query)
+
+    if expression_result is None:
+        explanation = (
+            "The stress result is based on the available multimodal signals. "
+            "No facial-expression verification was available."
+        )
+
+    elif stress_detected and emotion in {"happy", "neutral"}:
+        explanation = (
+            f"The fusion model detects stress ({fusion_probability:.1%}), "
+            f"while the expression verifier detects {emotion}. "
+            "This is a potential modality disagreement. The expression "
+            "verifier does not override the stress model."
+        )
+
+    elif (not stress_detected) and emotion in {
+        "angry",
+        "fear",
+        "disgust",
+    }:
+        explanation = (
+            f"The fusion model does not detect stress ({fusion_probability:.1%}), "
+            f"while the expression verifier detects {emotion}. "
+            "This is a potential modality disagreement. Visible expression "
+            "alone is not sufficient to infer stress."
+        )
+
+    elif emotion in {"sad", "surprise", "contempt"}:
+        explanation = (
+            f"The fusion model gives {fusion_probability:.1%} stress "
+            f"probability and the expression verifier detects {emotion}. "
+            "This expression is treated as ambiguous for binary stress "
+            "consistency checking."
+        )
+
+    else:
+        explanation = (
+            f"The fusion model gives {fusion_probability:.1%} stress "
+            f"probability and the expression verifier detects {emotion}. "
+            "The two signals are broadly consistent, but expression "
+            "recognition is not a direct measurement of stress."
+        )
+
+    return explanation, context
+
+
+def show_expression_verification(expression_result):
+    if expression_result is None:
+        return
+
+    st.markdown("### Facial Expression Verification")
+
+    st.write(
+        f"**Detected expression:** "
+        f"`{expression_result['top_emotion'].title()}`"
+    )
+
+    probabilities = sorted(
+        expression_result["probabilities"].items(),
+        key=lambda item: item[1],
+        reverse=True,
+    )
+
+    cols = st.columns(min(4, max(1, len(probabilities))))
+
+    for index, (label, score) in enumerate(probabilities):
+        with cols[index % len(cols)]:
+            st.metric(label.title(), f"{score:.1%}")
+
+
+# ============================================================
 # RESULT DISPLAY
 # ============================================================
 
@@ -546,6 +726,7 @@ def show_result(
     fusion_probability,
     face_probability=None,
     voice_probability=None,
+    expression_result=None,
 ):
 
     if fusion_probability is None:
@@ -565,10 +746,10 @@ def show_result(
 
         st.markdown(
             f"""
-            <div class="result-stress">
-                <div class="result-title">⚠️ STRESS DETECTED</div>
-                <div class="result-subtitle">
-                    Fusion probability: {fusion_probability:.1%}
+            <div class="result-lab stress">
+                <div class="result-heading">⚠ STRESS DETECTED</div>
+                <div class="result-detail">
+                    Fusion score: {fusion_probability:.1%}
                 </div>
             </div>
             """,
@@ -579,10 +760,10 @@ def show_result(
 
         st.markdown(
             f"""
-            <div class="result-safe">
-                <div class="result-title">✓ NO STRESS DETECTED</div>
-                <div class="result-subtitle">
-                    Fusion probability: {fusion_probability:.1%}
+            <div class="result-lab safe">
+                <div class="result-heading">✓ No Stress Detected</div>
+                <div class="result-detail">
+                    Fusion score: {fusion_probability:.1%}
                 </div>
             </div>
             """,
@@ -598,14 +779,14 @@ def show_result(
         value = (
             f"{face_probability:.1%}"
             if face_probability is not None
-            else "N/A"
+            else "—"
         )
 
         st.markdown(
             f"""
-            <div class="metric-card">
-                <div class="metric-title">Face Probability</div>
-                <div class="metric-value">{value}</div>
+            <div class="metric-lab">
+                <div class="metric-label">Face</div>
+                <div class="metric-val">{value}</div>
             </div>
             """,
             unsafe_allow_html=True,
@@ -616,14 +797,14 @@ def show_result(
         value = (
             f"{voice_probability:.1%}"
             if voice_probability is not None
-            else "N/A"
+            else "—"
         )
 
         st.markdown(
             f"""
-            <div class="metric-card">
-                <div class="metric-title">Voice Probability</div>
-                <div class="metric-value">{value}</div>
+            <div class="metric-lab">
+                <div class="metric-label">Voice</div>
+                <div class="metric-val">{value}</div>
             </div>
             """,
             unsafe_allow_html=True,
@@ -633,13 +814,30 @@ def show_result(
 
         st.markdown(
             f"""
-            <div class="metric-card">
-                <div class="metric-title">Fusion Probability</div>
-                <div class="metric-value">{fusion_probability:.1%}</div>
+            <div class="metric-lab">
+                <div class="metric-label">Fusion</div>
+                <div class="metric-val">{fusion_probability:.1%}</div>
             </div>
             """,
             unsafe_allow_html=True,
         )
+
+
+    show_expression_verification(expression_result)
+
+    if fusion_probability is not None:
+        explanation, rag_context = build_grounded_explanation(
+            fusion_probability,
+            expression_result,
+        )
+
+        with st.expander("🧠 Grounded RAG Explanation", expanded=False):
+            st.write(explanation)
+
+            if rag_context:
+                st.markdown("**Retrieved project knowledge:**")
+                for item in rag_context:
+                    st.caption(f"• {item}")
 
 
 # ============================================================
@@ -691,6 +889,7 @@ def analyze_uploaded_video(video_bytes):
         )
 
         embeddings = []
+        expression_predictions = []
 
         for index in frame_indices:
 
@@ -704,10 +903,18 @@ def analyze_uploaded_video(video_bytes):
             if not success:
                 continue
 
-            feature = extract_face_feature(frame)
+            face = detect_face(frame)
 
-            if feature is not None:
-                embeddings.append(feature)
+            if face is not None:
+                feature = face_embedding(face)
+
+                if feature is not None:
+                    embeddings.append(feature)
+
+                expression = verify_facial_expression(face)
+
+                if expression is not None:
+                    expression_predictions.append(expression)
 
         cap.release()
 
@@ -719,6 +926,31 @@ def analyze_uploaded_video(video_bytes):
                 np.stack(embeddings),
                 axis=0
             )
+
+        expression_result = None
+
+        if expression_predictions:
+            labels = set()
+
+            for item in expression_predictions:
+                labels.update(item["probabilities"].keys())
+
+            averaged = {
+                label: float(
+                    np.mean(
+                        [
+                            item["probabilities"].get(label, 0.0)
+                            for item in expression_predictions
+                        ]
+                    )
+                )
+                for label in labels
+            }
+
+            expression_result = {
+                "top_emotion": max(averaged, key=averaged.get),
+                "probabilities": averaged,
+            }
 
         # Extract audio
         def decode_audio_from_video(video_path):
@@ -803,6 +1035,7 @@ def analyze_uploaded_video(video_bytes):
             voice_probability,
             fusion_probability,
             duration,
+            expression_result,
         )
 
     finally:
@@ -948,8 +1181,18 @@ def analyze_live():
     if frame is None:
         return None, None, None
 
-    face_feature = extract_face_feature(
-        frame
+    face = detect_face(frame)
+
+    face_feature = (
+        face_embedding(face)
+        if face is not None
+        else None
+    )
+
+    expression_result = (
+        verify_facial_expression(face)
+        if face is not None
+        else None
     )
 
     voice_feature = None
@@ -978,6 +1221,7 @@ def analyze_live():
         face_probability,
         voice_probability,
         fusion_probability,
+        expression_result,
     )
 
 
@@ -1002,7 +1246,7 @@ mode = st.radio(
 if mode == "📁 Upload Video":
 
     st.markdown(
-        '<div class="section-title">Analyze a Video</div>',
+        '<div class="section-lab">Analyze a Video</div>',
         unsafe_allow_html=True,
     )
 
@@ -1040,6 +1284,7 @@ if mode == "📁 Upload Video":
                         voice_probability,
                         fusion_probability,
                         duration,
+                        expression_result,
                     ) = analyze_uploaded_video(
                         uploaded_file.getvalue()
                     )
@@ -1053,6 +1298,7 @@ if mode == "📁 Upload Video":
                         fusion_probability,
                         face_probability,
                         voice_probability,
+                        expression_result,
                     )
 
                 except Exception as e:
@@ -1071,7 +1317,7 @@ if mode == "📁 Upload Video":
 else:
 
     st.markdown(
-        '<div class="section-title">Live Stress Analysis</div>',
+        '<div class="section-lab">Live Stress Analysis</div>',
         unsafe_allow_html=True,
     )
 
@@ -1109,6 +1355,7 @@ else:
                     face_probability,
                     voice_probability,
                     fusion_probability,
+                    expression_result,
                 ) = analyze_live()
 
                 if fusion_probability is None:
@@ -1123,6 +1370,7 @@ else:
                     fusion_probability,
                     face_probability,
                     voice_probability,
+                    expression_result,
                 )
 
                 st.caption(
@@ -1144,11 +1392,11 @@ else:
 
         st.markdown(
             """
-            <div class="result-safe">
-                <div class="result-title">
-                    🎥 Camera & Microphone Ready
+            <div class="result-lab safe">
+                <div class="result-heading">
+                    Camera &amp; Microphone Ready
                 </div>
-                <div class="result-subtitle">
+                <div class="result-detail">
                     Start the stream to begin live analysis.
                 </div>
             </div>
@@ -1164,5 +1412,5 @@ else:
 st.divider()
 
 st.caption(
-    "Facial + Voice late-fusion stress classification"
+    "Facial + Voice late-fusion stress classification • FERPlus is advisory"
 )

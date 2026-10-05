@@ -1,0 +1,444 @@
+/* ==========================================================
+   AI HUMAN STRESS DETECTION — LABORATORY UI THEME
+   Dark Scientific Aesthetic · Restrained Teal & Amber Accents
+   ========================================================== */
+
+/* ---------- CSS Custom Properties ---------- */
+:root {
+  --bg-primary:     #0a0e17;
+  --bg-secondary:   rgba(16, 23, 38, 0.92);
+  --bg-surface:     rgba(19, 28, 46, 0.72);
+  --bg-elevated:    rgba(24, 35, 58, 0.78);
+
+  --text-primary:   #f1f5f9;
+  --text-secondary: #94a3b8;
+  --text-muted:     #64748b;
+
+  --accent-teal:    #2dd4bf;
+  --accent-teal-dim:rgba(45, 212, 191, 0.12);
+  --accent-teal-glow:rgba(45, 212, 191, 0.25);
+  --accent-amber:   #f59e0b;
+  --accent-amber-dim:rgba(245, 158, 11, 0.12);
+
+  --border-subtle:  rgba(148, 163, 184, 0.14);
+  --border-accent:  rgba(45, 212, 191, 0.32);
+
+  --danger-bg:      rgba(239, 68, 68, 0.10);
+  --danger-border:  rgba(239, 68, 68, 0.35);
+  --danger-text:    #f87171;
+
+  --safe-bg:        rgba(45, 212, 191, 0.08);
+  --safe-border:    rgba(45, 212, 191, 0.32);
+  --safe-text:      #5eead4;
+
+  --radius-sm:      6px;
+  --radius-md:      10px;
+  --radius-lg:      14px;
+
+  --font-mono:      ui-monospace, 'JetBrains Mono', 'SF Mono', 'Fira Code', Menlo, monospace;
+  --font-sans:      -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', Roboto, sans-serif;
+}
+
+/* ---------- 3D WebGL Canvas Layering (True Background: z-index 0) ---------- */
+
+#three-bg-canvas {
+  position: fixed !important;
+  top: 0 !important;
+  left: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  z-index: 0 !important;
+  pointer-events: none !important;
+  display: block !important;
+}
+
+/* Ensure stHtml wrapper never creates a layout box or overlay */
+div[data-testid="stHtml"],
+div.stHtml {
+  display: contents !important;
+}
+
+/* ---------- Streamlit Stacking Contexts (Reliably Above Canvas: z-index >= 10) ---------- */
+
+html {
+  background-color: var(--bg-primary) !important;
+}
+
+body {
+  background-color: transparent !important;
+  color: var(--text-primary) !important;
+  font-family: var(--font-sans) !important;
+  overflow-x: hidden !important;
+}
+
+#root {
+  position: relative !important;
+  z-index: 10 !important;
+}
+
+.stApp {
+  position: relative !important;
+  z-index: 10 !important;
+  background: transparent !important;
+}
+
+/* Main app view area is transparent so the 3D background shows through */
+[data-testid="stAppViewContainer"] {
+  position: relative !important;
+  z-index: 10 !important;
+  background: transparent !important;
+}
+
+[data-testid="stMain"] {
+  position: relative !important;
+  z-index: 10 !important;
+  background: transparent !important;
+}
+
+/* The block-container holding all cards, controls, and inputs */
+.main .block-container {
+  position: relative !important;
+  z-index: 20 !important;
+  padding-top: 1.8rem !important;
+  padding-bottom: 2.5rem !important;
+  max-width: 1220px !important;
+}
+
+/* Header and Sidebar: solidly positioned above the content */
+[data-testid="stHeader"] {
+  position: fixed !important;
+  z-index: 100 !important;
+  background: rgba(10, 14, 23, 0.85) !important;
+  backdrop-filter: blur(12px) !important;
+  -webkit-backdrop-filter: blur(12px) !important;
+  border-bottom: 1px solid var(--border-subtle) !important;
+}
+
+[data-testid="stSidebar"] {
+  position: relative !important;
+  z-index: 110 !important;
+  background-color: var(--bg-secondary) !important;
+  border-right: 1px solid var(--border-subtle) !important;
+}
+
+/* Typography across all Streamlit elements */
+.stMarkdown, .stMarkdown p, .stMarkdown span, .stMarkdown li,
+[data-testid="stMarkdownContainer"] p,
+[data-testid="stMarkdownContainer"] span,
+[data-testid="stMarkdownContainer"] li,
+[data-testid="stMarkdownContainer"] strong,
+[data-testid="stWidgetLabel"] label,
+[data-testid="stWidgetLabel"] span {
+  color: var(--text-primary) !important;
+}
+
+[data-testid="stMarkdownContainer"] h1,
+[data-testid="stMarkdownContainer"] h2,
+[data-testid="stMarkdownContainer"] h3,
+[data-testid="stMarkdownContainer"] h4 {
+  color: #ffffff !important;
+  letter-spacing: -0.015em !important;
+}
+
+/* ---------- Sidebar Laboratory Panel ---------- */
+
+[data-testid="stSidebar"] {
+  background-color: var(--bg-secondary) !important;
+  backdrop-filter: blur(12px) !important;
+  -webkit-backdrop-filter: blur(12px) !important;
+  border-right: 1px solid var(--border-subtle) !important;
+  z-index: 3 !important;
+}
+
+[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] * {
+  color: var(--text-secondary) !important;
+}
+
+[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] h2,
+[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] h3 {
+  color: #ffffff !important;
+  font-size: 15px !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.08em !important;
+  font-family: var(--font-mono) !important;
+  margin-top: 1rem !important;
+}
+
+[data-testid="stSidebar"] code {
+  background: rgba(19, 28, 46, 0.8) !important;
+  color: var(--accent-teal) !important;
+  border: 1px solid var(--border-subtle) !important;
+  border-radius: var(--radius-sm) !important;
+  padding: 2px 6px !important;
+  font-family: var(--font-mono) !important;
+}
+
+[data-testid="stSidebar"] hr {
+  border-color: var(--border-subtle) !important;
+  margin: 1.2rem 0 !important;
+}
+
+/* ---------- Laboratory Hero Banner ---------- */
+
+.hero-lab {
+  position: relative;
+  padding: 26px 30px;
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid var(--border-accent);
+  margin-bottom: 24px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+}
+
+.hero-lab::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 2px;
+  background: linear-gradient(90deg, 
+    var(--accent-teal) 0%, 
+    rgba(45, 212, 191, 0.4) 50%, 
+    var(--accent-amber) 100%);
+}
+
+.hero-lab .hero-tag {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--accent-teal);
+  background: var(--accent-teal-dim);
+  border: 1px solid rgba(45, 212, 191, 0.28);
+  padding: 3px 9px;
+  border-radius: var(--radius-sm);
+  margin-right: 8px;
+  font-family: var(--font-mono);
+}
+
+.hero-lab h1 {
+  margin: 10px 0 6px 0;
+  font-size: 28px;
+  font-weight: 700;
+  color: #ffffff;
+  letter-spacing: -0.02em;
+}
+
+.hero-lab p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+
+/* ---------- Section Title ---------- */
+
+.section-lab {
+  font-size: 15px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-primary);
+  margin: 20px 0 14px 0;
+  padding-left: 10px;
+  border-left: 3px solid var(--accent-teal);
+  font-family: var(--font-mono);
+}
+
+/* ---------- Metric Cards ---------- */
+
+.metric-lab {
+  padding: 16px 14px;
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid var(--border-subtle);
+  text-align: center;
+  transition: all 0.2s ease;
+}
+
+.metric-lab:hover {
+  border-color: var(--border-accent);
+  background: var(--bg-elevated);
+}
+
+.metric-lab .metric-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+  font-family: var(--font-mono);
+}
+
+.metric-lab .metric-val {
+  font-size: 26px;
+  font-weight: 700;
+  color: var(--accent-teal);
+  font-family: var(--font-mono);
+}
+
+/* ---------- Result Cards ---------- */
+
+.result-lab {
+  padding: 22px 24px;
+  border-radius: var(--radius-lg);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  text-align: center;
+  margin-bottom: 8px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+}
+
+.result-lab.stress {
+  background: var(--danger-bg);
+  border: 1px solid var(--danger-border);
+}
+
+.result-lab.safe {
+  background: var(--safe-bg);
+  border: 1px solid var(--safe-border);
+}
+
+.result-lab .result-heading {
+  font-size: 22px;
+  font-weight: 700;
+  margin: 0 0 4px 0;
+  letter-spacing: -0.01em;
+}
+
+.result-lab.stress .result-heading {
+  color: var(--danger-text);
+}
+
+.result-lab.safe .result-heading {
+  color: var(--safe-text);
+}
+
+.result-lab .result-detail {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+}
+
+/* ---------- Form Controls & Widgets ---------- */
+
+/* Mode selection radio pills */
+[data-testid="stRadio"] [role="radiogroup"] {
+  gap: 8px !important;
+}
+
+[data-testid="stRadio"] [role="radiogroup"] label {
+  background: var(--bg-surface) !important;
+  backdrop-filter: blur(6px) !important;
+  border: 1px solid var(--border-subtle) !important;
+  border-radius: var(--radius-sm) !important;
+  padding: 8px 16px !important;
+  color: var(--text-secondary) !important;
+  transition: all 0.15s ease !important;
+}
+
+[data-testid="stRadio"] [role="radiogroup"] label[data-baseweb][aria-checked="true"],
+[data-testid="stRadio"] [role="radiogroup"] label:has(input:checked) {
+  border-color: var(--accent-teal) !important;
+  background: var(--accent-teal-dim) !important;
+  color: var(--accent-teal) !important;
+}
+
+/* Primary Button */
+button[kind="primary"],
+.stButton > button[kind="primary"] {
+  background: var(--accent-teal) !important;
+  color: #0a0e17 !important;
+  border: none !important;
+  font-weight: 600 !important;
+  border-radius: var(--radius-sm) !important;
+  font-size: 14px !important;
+  letter-spacing: 0.02em !important;
+  padding: 0.55rem 1.2rem !important;
+  transition: transform 0.1s ease, filter 0.15s ease !important;
+}
+
+button[kind="primary"]:hover {
+  filter: brightness(1.1) !important;
+}
+
+/* File Uploader */
+[data-testid="stFileUploader"] {
+  background: var(--bg-surface) !important;
+  backdrop-filter: blur(6px) !important;
+  border: 1px dashed var(--border-accent) !important;
+  border-radius: var(--radius-md) !important;
+  padding: 14px !important;
+}
+
+[data-testid="stFileUploaderDropzone"] {
+  background: transparent !important;
+}
+
+/* Alert Boxes */
+[data-testid="stAlert"] {
+  background: var(--bg-surface) !important;
+  backdrop-filter: blur(6px) !important;
+  border: 1px solid var(--border-subtle) !important;
+  border-radius: var(--radius-md) !important;
+  color: var(--text-secondary) !important;
+}
+
+/* Spinner */
+.stSpinner > div {
+  border-top-color: var(--accent-teal) !important;
+}
+
+/* Dividers & Captions */
+hr {
+  border-color: var(--border-subtle) !important;
+}
+
+.stCaption, [data-testid="stCaptionContainer"] {
+  color: var(--text-muted) !important;
+  font-family: var(--font-mono) !important;
+  font-size: 12px !important;
+}
+
+/* Media Elements */
+video, [data-testid="stVideo"] video {
+  border-radius: var(--radius-md) !important;
+  border: 1px solid var(--border-subtle) !important;
+  background: #000 !important;
+}
+
+[data-testid="stVideo"] {
+  border-radius: var(--radius-md) !important;
+}
+
+/* Reduced Motion */
+@media (prefers-reduced-motion: reduce) {
+  #three-bg-canvas {
+    animation: none !important;
+  }
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .hero-lab {
+    padding: 18px 20px;
+  }
+  .hero-lab h1 {
+    font-size: 21px;
+  }
+  .metric-lab .metric-val {
+    font-size: 22px;
+  }
+  .result-lab .result-heading {
+    font-size: 19px;
+  }
+}
