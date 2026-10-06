@@ -2085,22 +2085,31 @@ st.html("""
     </div>
   </div>
 
-  <div class="pipe-support-label">Decision Layer — open-source expression models have priority</div>
+  <div class="pipe-support-label">Primary Decision Layer — open-source expression models</div>
 
   <div class="pipe-row pipe-row-split2">
     <div class="pipe-box pipe-support">
       <div class="pipe-icon">🙂</div>
-      <div class="pipe-title">FERPlus + MobileFaceNet — Expression Verification</div>
-      <div class="pipe-desc">Open-source expression models check the face for visible
-      emotions (happy, sad, angry, fear, neutral …). It provides supporting
-      evidence — a disagreement is reported, <em>not</em> used to override the stress score.</div>
+      <div class="pipe-title">FERPlus + MobileFaceNet — Primary Expression Decision</div>
+      <div class="pipe-desc">Two local open-source facial-expression models analyze the visible face.
+      Clear mapped expressions are used for the application's primary decision.
+      If expression evidence is unavailable or ambiguous, the trained multimodal stress model is used as the fallback.</div>
     </div>
     <div class="pipe-box pipe-support">
+      <div class="pipe-icon">📊</div>
+      <div class="pipe-title">Trained Face + Voice Model — Secondary Evidence</div>
+      <div class="pipe-desc">ResNet18 face and MFCC voice classifiers produce the
+      <code>0.40 × Face + 0.60 × Voice</code> stress probability.
+      This score is retained as secondary evidence and fallback, not the primary user-facing decision.</div>
+    </div>
+  </div>
+
+  <div class="pipe-row">
+    <div class="pipe-box pipe-support" style="max-width: 800px;">
       <div class="pipe-icon">📖</div>
       <div class="pipe-title">RAG — Grounded Explanation</div>
-      <div class="pipe-desc">Retrieval-Augmented Generation searches a
-      built-in knowledge base and writes a plain-English explanation
-      of why the model made its decision. No external API is used.</div>
+      <div class="pipe-desc">The local retrieval layer finds relevant project knowledge
+      and explains the decision in plain language. RAG explains the result; it does not create an independent prediction.</div>
     </div>
   </div>
 
@@ -2112,15 +2121,15 @@ st.markdown('<div class="section-lab">How It Works</div>', unsafe_allow_html=Tru
 
 steps = [
     ("01", "Capture", "🎬",
-     "Upload a video (or go live) showing a person speaking. Both face and audible speech are needed for the best prediction."),
-    ("02", "Analyze the Face", "👤",
-     "The system finds the face using YuNet, then runs it through ResNet-18 — a neural network that extracts 512 visual features tied to stress-related appearance."),
-    ("03", "Analyze the Voice", "🎙️",
-     "Audio is converted into MFCC features — a compact fingerprint of how speech sounds, capturing pitch, energy, and tempo, which all change under stress."),
-    ("04", "Combine the Signals", "⚖️",
-     "The trained face and voice models produce a secondary 40%/60% stress score. The final user-facing decision is made by the local open-source facial-expression models when available."),
-    ("05", "Verify & Explain", "📖",
-     "FERPlus checks the visible facial expression. RAG generates a plain-English explanation. These models have priority for the final application decision; the trained multimodal score is secondary."),
+     "Upload a video or use the live camera and microphone. The system samples the visible face and available speech."),
+    ("02", "Analyze Face & Voice", "👤",
+     "YuNet detects the face and ResNet-18 extracts 512-D visual features. Speech is converted into 240-D MFCC, delta and delta-delta features."),
+    ("03", "Estimate Stress", "⚖️",
+     "The trained face and voice classifiers produce stress probabilities and a secondary late-fusion score: 40% face + 60% voice."),
+    ("04", "Verify Expression", "🙂",
+     "FERPlus and MobileFaceNet independently classify the visible facial expression. Clear mapped expressions form the primary application-level decision; ambiguous or unavailable expression evidence falls back to the trained stress model."),
+    ("05", "Explain", "📖",
+     "The local RAG layer retrieves project-grounded information and explains the final decision. It explains the result but does not generate a separate prediction."),
 ]
 
 step_cols = st.columns(5)
@@ -2151,5 +2160,6 @@ for i, (num, title, icon, desc) in enumerate(steps):
 st.divider()
 
 st.caption(
-    "Facial + Voice late-fusion stress classification • FERPlus is advisory"
+    "Open-source facial-expression models are the primary application decision layer • "
+    "trained face + voice fusion is secondary evidence and fallback"
 )

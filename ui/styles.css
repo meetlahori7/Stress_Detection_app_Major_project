@@ -592,3 +592,69 @@ video, [data-testid="stVideo"] video {
   .pipe-split { flex-direction: column; }
   .pipe-track { max-width: 100%; }
 }
+
+
+/* ---------- Accessibility / Text Contrast Fix ---------- */
+header[data-testid="stHeader"] {
+  background: #fffdf8 !important;
+  color: var(--text-primary) !important;
+}
+
+header[data-testid="stHeader"] *,
+[data-testid="stToolbar"] *,
+[data-testid="stDecoration"] * {
+  color: var(--text-primary) !important;
+  opacity: 1 !important;
+}
+
+/* Upload area: make all instructional text clearly readable */
+[data-testid="stFileUploader"],
+[data-testid="stFileUploader"] * {
+  color: var(--text-primary) !important;
+}
+
+[data-testid="stFileUploader"] section {
+  color: var(--text-primary) !important;
+  background: rgba(255,255,255,0.92) !important;
+}
+
+[data-testid="stFileUploader"] button {
+  color: #3b332b !important;
+}
+
+[data-testid="stFileUploader"] small,
+[data-testid="stFileUploader"] [data-testid="stFileUploaderFileName"] {
+  color: var(--text-secondary) !important;
+  opacity: 1 !important;
+}
+
+/* Streamlit widget labels and helper text */
+[data-testid="stWidgetLabel"],
+[data-testid="stWidgetLabel"] *,
+[data-testid="stFileUploaderDropzoneInstructions"],
+[data-testid="stFileUploaderDropzoneInstructions"] * {
+  color: var(--text-primary) !important;
+  opacity: 1 !important;
+}
+
+/* Avoid pale inherited text in generic controls */
+.stApp p,
+.stApp label,
+.stApp span,
+.stApp small,
+.stApp div {
+  text-rendering: optimizeLegibility;
+}
+
+.stApp .stCaption,
+.stApp [data-testid="stCaptionContainer"] {
+  color: var(--text-secondary) !important;
+  opacity: 1 !important;
+}
+
+/* Top-right Streamlit controls remain visible on cream */
+[data-testid="stHeader"] button,
+[data-testid="stHeader"] svg {
+  color: var(--text-primary) !important;
+  fill: var(--text-primary) !important;
+}
