@@ -1893,9 +1893,21 @@ else:
         audio_processor_factory=lambda: AudioProcessor(
             live_state
         ),
+        # Ask the browser for an HD-capable camera stream. The returned
+        # frames stay at the negotiated camera resolution for display; the
+        # ML pipeline still resizes only the face crop for inference.
         media_stream_constraints={
-            "video": True,
-            "audio": True,
+            "video": {
+                "width": {"ideal": 1280, "min": 640},
+                "height": {"ideal": 720, "min": 360},
+                "frameRate": {"ideal": 30, "max": 30},
+                "facingMode": {"ideal": "user"},
+            },
+            "audio": {
+                "echoCancellation": True,
+                "noiseSuppression": True,
+                "autoGainControl": True,
+            },
         },
         async_processing=True,
     )
@@ -2061,31 +2073,18 @@ st.html("""
   <div class="pipe-row">
     <div class="pipe-box pipe-fusion">
       <div class="pipe-icon">⚖️</div>
-      <div class="pipe-title">Late Fusion</div>
+      <div class="pipe-title">Trained Multimodal Stress Model — Secondary</div>
       <div class="pipe-desc">
-        The trained stress models produce a secondary evidence score:<br>
-        <code>Final = 0.40 × Face + 0.60 × Voice</code><br>
-        The trained fusion configuration gives voice a 60% weight and face a 40% weight.
+        The trained face and voice classifiers produce a secondary evidence score:<br>
+        <code>0.40 × Face + 0.60 × Voice</code><br>
+        This score is used as fallback when the primary expression evidence is unavailable or ambiguous.
       </div>
     </div>
   </div>
 
   <div class="pipe-arrow">↓</div>
 
-  <div class="pipe-row pipe-row-split2">
-    <div class="pipe-box pipe-stress">
-      <div class="pipe-icon">⚠️</div>
-      <div class="pipe-title">Stress Detected</div>
-      <div class="pipe-desc">Final score ≥ 0.50</div>
-    </div>
-    <div class="pipe-box pipe-safe">
-      <div class="pipe-icon">✓</div>
-      <div class="pipe-title">No Stress</div>
-      <div class="pipe-desc">Final score &lt; 0.50</div>
-    </div>
-  </div>
-
-  <div class="pipe-support-label">Primary Decision Layer — open-source expression models</div>
+  <div class="pipe-support-label">PRIMARY USER-FACING DECISION — local open-source expression models</div>
 
   <div class="pipe-row pipe-row-split2">
     <div class="pipe-box pipe-support">

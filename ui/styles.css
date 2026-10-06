@@ -436,19 +436,127 @@ video, [data-testid="stVideo"] video {
   }
 }
 
-/* Responsive adjustments */
+/* ---------- Responsive adjustments ---------- */
 @media (max-width: 768px) {
+  .main .block-container {
+    width: 100% !important;
+    max-width: 100% !important;
+    padding: 1rem 0.85rem 2rem !important;
+    box-sizing: border-box !important;
+  }
+
   .hero-lab {
-    padding: 24px 24px;
+    padding: 22px 18px !important;
+    margin-bottom: 20px !important;
+    border-radius: 16px !important;
   }
+
   .hero-lab h1 {
-    font-size: 24px;
+    font-size: clamp(22px, 7vw, 28px) !important;
+    line-height: 1.15 !important;
   }
+
+  .hero-lab p {
+    font-size: 13px !important;
+    line-height: 1.5 !important;
+  }
+
+  .hero-lab .hero-tag {
+    margin: 0 5px 5px 0 !important;
+    padding: 4px 9px !important;
+    font-size: 10px !important;
+  }
+
+  /* Streamlit horizontal blocks become full-width stacks on phones. */
+  [data-testid="stHorizontalBlock"] {
+    flex-wrap: wrap !important;
+    gap: 0.65rem !important;
+  }
+
+  [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] {
+    width: 100% !important;
+    flex: 1 1 100% !important;
+    min-width: 100% !important;
+  }
+
+  /* The mode selector is easier to tap when it wraps. */
+  [data-testid="stRadio"] [role="radiogroup"] {
+    flex-wrap: wrap !important;
+    gap: 8px !important;
+  }
+
+  [data-testid="stRadio"] [role="radiogroup"] label {
+    flex: 1 1 100% !important;
+    min-width: 0 !important;
+    box-sizing: border-box !important;
+    padding: 11px 14px !important;
+  }
+
+  [data-testid="stFileUploader"] {
+    padding: 12px !important;
+  }
+
+  [data-testid="stFileUploaderDropzone"] {
+    min-height: 120px !important;
+  }
+
+  /* Keep uploaded and live video sharp and correctly proportioned. */
+  [data-testid="stVideo"],
+  [data-testid="stVideo"] video,
+  video {
+    width: 100% !important;
+    max-width: 100% !important;
+    height: auto !important;
+    min-height: 0 !important;
+    aspect-ratio: 16 / 9 !important;
+    object-fit: contain !important;
+    display: block !important;
+  }
+
+  /* streamlit-webrtc may render its video inside a component wrapper. */
+  [data-testid="stCustomComponentV1"],
+  iframe {
+    max-width: 100% !important;
+  }
+
+  .metric-lab {
+    padding: 15px 12px !important;
+  }
+
   .metric-lab .metric-val {
-    font-size: 24px;
+    font-size: 22px !important;
   }
+
+  .result-lab {
+    padding: 20px 16px !important;
+  }
+
   .result-lab .result-heading {
-    font-size: 20px;
+    font-size: 20px !important;
+  }
+}
+
+@media (max-width: 480px) {
+  .main .block-container {
+    padding-left: 0.65rem !important;
+    padding-right: 0.65rem !important;
+  }
+
+  .section-lab {
+    font-size: 12px !important;
+    margin: 18px 0 12px !important;
+  }
+
+  .pipe-box {
+    padding: 12px 13px !important;
+  }
+
+  .pipe-title {
+    font-size: 13px !important;
+  }
+
+  .pipe-desc {
+    font-size: 12px !important;
   }
 }
 
@@ -589,8 +697,43 @@ video, [data-testid="stVideo"] video {
 }
 
 @media (max-width: 640px) {
-  .pipe-split { flex-direction: column; }
-  .pipe-track { max-width: 100%; }
+  .pipeline-wrap {
+    width: 100%;
+    padding: 18px 0 4px;
+    box-sizing: border-box;
+  }
+
+  .pipe-split {
+    flex-direction: column;
+    gap: 10px;
+    width: 100%;
+  }
+
+  .pipe-track {
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .pipe-box,
+  .pipe-box.pipe-input,
+  .pipe-box.pipe-fusion,
+  .pipe-box.pipe-stress,
+  .pipe-box.pipe-safe,
+  .pipe-box.pipe-support {
+    width: 100%;
+    max-width: 100%;
+    flex: 1 1 100%;
+  }
+
+  .pipe-row-split2 {
+    width: 100%;
+    gap: 10px;
+  }
+
+  .pipe-support-label {
+    font-size: 10px;
+    line-height: 1.45;
+  }
 }
 
 
@@ -657,4 +800,34 @@ header[data-testid="stHeader"] *,
 [data-testid="stHeader"] svg {
   color: var(--text-primary) !important;
   fill: var(--text-primary) !important;
+}
+
+
+/* ---------- Mobile / WebRTC hardening ---------- */
+.stApp {
+  width: 100% !important;
+  max-width: 100% !important;
+  overflow-x: hidden !important;
+}
+
+[data-testid="stFileUploaderDropzoneInstructions"] {
+  color: var(--text-primary) !important;
+}
+
+[data-testid="stFileUploaderDropzoneInstructions"] span,
+[data-testid="stFileUploaderDropzoneInstructions"] small {
+  color: var(--text-secondary) !important;
+  opacity: 1 !important;
+}
+
+/* Do not force a low-resolution canvas on the live stream. */
+[data-testid="stCustomComponentV1"] {
+  width: 100% !important;
+  max-width: 100% !important;
+}
+
+@media (max-width: 768px) {
+  [data-testid="stCustomComponentV1"] {
+    min-height: 220px !important;
+  }
 }
