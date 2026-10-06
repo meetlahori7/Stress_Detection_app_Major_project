@@ -49,23 +49,23 @@
 
     const renderer = new THREE.WebGLRenderer({
       canvas: canvas,
-      antialias: false,
+      antialias: true,
       alpha: false,
       powerPreference: 'low-power'
     });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
     renderer.setSize(width, height);
-    renderer.setClearColor(0x0a0e17, 1);
+    renderer.setClearColor(0xfcfbf8, 1); // Creamy white background
 
     const scene = new THREE.Scene();
-    scene.fog = new THREE.FogExp2(0x0a0e17, 0.0016);
+    scene.fog = new THREE.FogExp2(0xfcfbf8, 0.0016);
 
     const camera = new THREE.PerspectiveCamera(55, width / height, 1, 2000);
     camera.position.set(0, 0, 420);
 
-    const TEAL = new THREE.Color(0x2dd4bf);
-    const AMBER = new THREE.Color(0xf59e0b);
-    const DIM = new THREE.Color(0x1e293b);
+    const GOLD = new THREE.Color(0xdca646);
+    const WARM_BROWN = new THREE.Color(0xab7946);
+    const LIGHT_BEIGE = new THREE.Color(0xe8dfd5);
 
     const PARTICLE_COUNT = 150;
     const SPREAD = 560;
@@ -81,18 +81,18 @@
       positions[i3 + 2] = (Math.random() - 0.5) * SPREAD * 0.5;
 
       const r = Math.random();
-      let c = DIM;
-      if (r < 0.20) c = TEAL;
-      else if (r < 0.28) c = AMBER;
+      let c = LIGHT_BEIGE;
+      if (r < 0.20) c = GOLD;
+      else if (r < 0.28) c = WARM_BROWN;
 
       colors[i3] = c.r;
       colors[i3 + 1] = c.g;
       colors[i3 + 2] = c.b;
 
       velocities.push({
-        x: (Math.random() - 0.5) * 0.16,
-        y: (Math.random() - 0.5) * 0.16,
-        z: (Math.random() - 0.5) * 0.08
+        x: (Math.random() - 0.5) * 0.12,
+        y: (Math.random() - 0.5) * 0.12,
+        z: (Math.random() - 0.5) * 0.06
       });
     }
 
@@ -101,10 +101,10 @@
     pointGeo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
 
     const pointMat = new THREE.PointsMaterial({
-      size: 3.2,
+      size: 3.5,
       vertexColors: true,
       transparent: true,
-      opacity: 0.8,
+      opacity: 0.7,
       sizeAttenuation: true,
       depthWrite: false
     });
@@ -126,7 +126,7 @@
     const lineMat = new THREE.LineBasicMaterial({
       vertexColors: true,
       transparent: true,
-      opacity: 0.35,
+      opacity: 0.25,
       depthWrite: false
     });
 
@@ -136,9 +136,9 @@
     // Expanding neural rings
     const rings = [];
     const RING_MAT = new THREE.MeshBasicMaterial({
-      color: TEAL,
+      color: GOLD,
       transparent: true,
-      opacity: 0.08,
+      opacity: 0.05,
       wireframe: true,
       depthWrite: false
     });
@@ -153,12 +153,12 @@
       );
       mesh.rotation.x = Math.random() * Math.PI;
       mesh.rotation.y = Math.random() * Math.PI;
-      mesh.userData = { age: 0, maxAge: 240 + Math.random() * 160 };
-      if (Math.random() > 0.65) mesh.material.color = AMBER;
+      mesh.userData = { age: 0, maxAge: 280 + Math.random() * 160 };
+      if (Math.random() > 0.65) mesh.material.color = WARM_BROWN;
       scene.add(mesh);
       rings.push(mesh);
     }
-    for (let i = 0; i < 3; i++) spawnRing();
+    for (let i = 0; i < 2; i++) spawnRing();
 
     function updateParticles() {
       const pos = pointGeo.attributes.position.array;
@@ -200,7 +200,8 @@
             lp[s6 + 3] = pos[j3]; lp[s6 + 4] = pos[j3 + 1]; lp[s6 + 5] = pos[j3 + 2];
 
             const alpha = 1 - Math.sqrt(d2) / LINE_DIST;
-            const r = 0.176 * alpha, g = 0.831 * alpha, b = 0.749 * alpha;
+            // Warm beige-gold connections
+            const r = 0.863 * alpha, g = 0.651 * alpha, b = 0.275 * alpha;
             lc[s6] = r; lc[s6 + 1] = g; lc[s6 + 2] = b;
             lc[s6 + 3] = r; lc[s6 + 4] = g; lc[s6 + 5] = b;
             seg++;
@@ -217,10 +218,10 @@
         const ring = rings[i];
         ring.userData.age++;
         const t = ring.userData.age / ring.userData.maxAge;
-        const scale = 1 + t * 70;
+        const scale = 1 + t * 50;
         ring.scale.set(scale, scale, scale);
-        ring.material.opacity = 0.08 * (1 - t);
-        ring.rotation.z += 0.002;
+        ring.material.opacity = 0.05 * (1 - t);
+        ring.rotation.z += 0.001;
         if (t >= 1) {
           scene.remove(ring);
           ring.geometry.dispose();
@@ -228,14 +229,14 @@
           rings.splice(i, 1);
         }
       }
-      if (rings.length < 4 && Math.random() < 0.007) spawnRing();
+      if (rings.length < 3 && Math.random() < 0.005) spawnRing();
     }
 
     let elapsed = 0;
     function updateCamera() {
-      elapsed += 0.0025;
-      camera.position.x = Math.sin(elapsed * 0.3) * 25;
-      camera.position.y = Math.cos(elapsed * 0.25) * 15;
+      elapsed += 0.0015;
+      camera.position.x = Math.sin(elapsed * 0.3) * 20;
+      camera.position.y = Math.cos(elapsed * 0.25) * 12;
       camera.lookAt(0, 0, 0);
     }
 
@@ -273,21 +274,21 @@
     const numNodes = 70;
     const nodes = [];
     for (let i = 0; i < numNodes; i++) {
-      const isTeal = Math.random() < 0.25;
-      const isAmber = !isTeal && Math.random() < 0.12;
+      const isGold = Math.random() < 0.25;
+      const isBrown = !isGold && Math.random() < 0.12;
       nodes.push({
         x: Math.random() * w,
         y: Math.random() * h,
-        vx: (Math.random() - 0.5) * 0.35,
-        vy: (Math.random() - 0.5) * 0.35,
+        vx: (Math.random() - 0.5) * 0.25,
+        vy: (Math.random() - 0.5) * 0.25,
         r: Math.random() * 2 + 1.2,
-        color: isTeal ? '#2dd4bf' : (isAmber ? '#f59e0b' : '#334155'),
-        alpha: isTeal ? 0.75 : (isAmber ? 0.65 : 0.35)
+        color: isGold ? '#dca646' : (isBrown ? '#ab7946' : '#e8dfd5'),
+        alpha: isGold ? 0.6 : (isBrown ? 0.5 : 0.3)
       });
     }
 
     function draw() {
-      ctx.fillStyle = '#0a0e17';
+      ctx.fillStyle = '#fcfbf8'; // Creamy white background
       ctx.fillRect(0, 0, w, h);
 
       for (let i = 0; i < numNodes; i++) {
@@ -296,8 +297,8 @@
           const dy = nodes[i].y - nodes[j].y;
           const d = Math.sqrt(dx * dx + dy * dy);
           if (d < 125) {
-            const alpha = (1 - d / 125) * 0.22;
-            ctx.strokeStyle = `rgba(45, 212, 191, ${alpha})`;
+            const alpha = (1 - d / 125) * 0.15;
+            ctx.strokeStyle = `rgba(204, 164, 86, ${alpha})`;
             ctx.lineWidth = 0.8;
             ctx.beginPath();
             ctx.moveTo(nodes[i].x, nodes[i].y);

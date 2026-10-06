@@ -49,14 +49,41 @@ FACE_WEIGHT = 0.40
 VOICE_WEIGHT = 0.60
 THRESHOLD = 0.50
 
+# Live-only reliability controls. These do not alter the trained models.
+LIVE_EMA_ALPHA = 0.35
+LIVE_DECISION_WINDOW = 5
+LIVE_STRESS_CONFIRMATIONS = 3
+LIVE_LOW_STRESS_EXPRESSION_CONFIDENCE = 0.80
+LIVE_VETO_STRESS_LIMIT = 0.60
+LIVE_EXPRESSION_CONFIRMATIONS = 3
+LIVE_MIN_AUDIO_RMS = 0.008
+
 AUDIO_SR = 16000
 AUDIO_WINDOW_SECONDS = 3.0
 
 # Local open-source facial-expression verification model.
-# Advisory only: this branch NEVER changes the stress prediction.
+# Supporting expression evidence. A conservative live-only gate may use persistent low-stress consensus.
 FER_MODEL_PATH = os.path.join(
     MODEL_DIR, "fer", "emotion-ferplus-8.onnx"
 )
+
+MOBILEFER_MODEL_PATH = os.path.join(
+    MODEL_DIR,
+    "fer",
+    "facial_expression_recognition_mobilefacenet_2022july.onnx",
+)
+
+# MobileFaceNet Progressive Teacher output order from OpenCV Zoo:
+# angry, disgust, fearful, happy, neutral, sad, surprised.
+MOBILEFER_LABELS = [
+    "angry",
+    "disgust",
+    "fear",
+    "happy",
+    "neutral",
+    "sad",
+    "surprise",
+]
 
 # Emotion FERPlus output order documented by the ONNX model:
 # neutral, happiness, surprise, sadness, anger, disgust, fear, contempt.
@@ -78,7 +105,7 @@ RAG_DOCUMENTS = [
     "The final stress prediction uses late fusion with 40 percent face probability and 60 percent voice probability.",
     "The stress decision threshold is 0.50. This project uses emotion-derived proxy labels, not clinically validated stress labels.",
     "Facial-expression recognition identifies visible expressions such as happy, sad, angry, fear, disgust, surprise, neutral and contempt. Expression is not the same thing as a person's actual emotional or stress state.",
-    "A disagreement between the stress classifier and facial-expression verifier should be reported as a modality or label disagreement, not used to overwrite the stress prediction.",
+    "The facial-expression models are supporting evidence. In live mode, only strong and persistent agreement on a high-confidence happy or neutral expression can veto a borderline stress prediction; they do not directly convert emotion into stress.",
     "Happy or neutral facial expression can coexist with stress signals from voice or other modalities. Angry, fearful or disgust expressions can also occur without actual stress.",
     "Sad and surprise are treated as ambiguous for binary stress consistency checking because they do not provide a reliable binary stress decision.",
 ]
@@ -248,6 +275,40 @@ def load_fer_model():
 
 
 @st.cache_resource
+def load_mobileface_model():
+    """Load the OpenCV Zoo MobileFaceNet expression model."""
+    if not os.path.exists(MOBILEFER_MODEL_PATH):
+        return None
+
+    session_options = ort.SessionOptions()
+    session_options.graph_optimization_level = (
+        ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+    )
+
+    session = ort.InferenceSession(
+        MOBILEFER_MODEL_PATH,
+        sess_options=session_options,
+        providers=["CPUExecutionProvider"],
+    )
+
+    inputs = session.get_inputs()
+    outputs = session.get_outputs()
+
+    if not inputs or not outputs:
+        raise RuntimeError(
+            "MobileFaceNet ONNX model has no input/output tensor."
+        )
+
+    input_shape = inputs[0].shape
+    if len(input_shape) != 4:
+        raise RuntimeError(
+            f"Unexpected MobileFaceNet input shape: {input_shape}"
+        )
+
+    return session
+
+
+@st.cache_resource
 def load_preprocessing():
 
     return transforms.Compose(
@@ -268,6 +329,7 @@ try:
     classifier_package = load_classifier()
     face_transform = load_preprocessing()
     fer_session = load_fer_model()
+    mobilefer_session = load_mobileface_model()
 
 except Exception as e:
     st.error("Model loading failed.")
@@ -279,42 +341,18 @@ except Exception as e:
 # MODEL INFORMATION
 # ============================================================
 
-with st.sidebar:
-
-    st.markdown("## ⚙️ System")
-
-    st.write(f"**Device:** `{DEVICE.upper()}`")
-
-    st.divider()
-
-    st.markdown("### Model Pipeline")
-
-    st.write("🎥 YuNet Face Detection")
-    st.write("🧠 ResNet18 Face Encoder")
-    st.write("🎙️ MFCC Voice Features")
-    st.write("🔗 Late Fusion")
-    st.write("🙂 FERPlus Expression Verification")
-
-    st.divider()
-
-    st.markdown("### Fusion")
-
-    st.write("Face weight: **40%**")
-    st.write("Voice weight: **60%**")
-    st.write("Threshold: **0.50**")
+# (Sidebar removed for cleaner UI focus)
 
 
 # ============================================================
 # FACE DETECTION
 # ============================================================
 
-def detect_face(frame):
-
+def detect_face_data(frame):
     """
     Detect the highest-confidence face.
-    Returns cropped BGR face or None.
+    Returns (cropped_face_bgr, raw_yunet_detection) or None.
     """
-
     if frame is None:
         return None
 
@@ -339,7 +377,6 @@ def detect_face(frame):
     bw = int(bw)
     bh = int(bh)
 
-    # 15% margin
     margin_x = int(0.15 * bw)
     margin_y = int(0.15 * bh)
 
@@ -352,7 +389,13 @@ def detect_face(frame):
     if x2 <= x1 or y2 <= y1:
         return None
 
-    return frame[y1:y2, x1:x2]
+    return frame[y1:y2, x1:x2], best_face
+
+
+def detect_face(frame):
+    """Detect and return the highest-confidence cropped face."""
+    result = detect_face_data(frame)
+    return result[0] if result is not None else None
 
 
 # ============================================================
@@ -546,53 +589,106 @@ def _softmax(scores):
     return exp_scores / np.sum(exp_scores)
 
 
-def verify_facial_expression(face_bgr):
-    """
-    Predict visible facial expression using local Emotion FERPlus ONNX.
-
-    This branch is advisory only. It never changes the trained stress
-    probabilities or the 40/60 fusion decision.
-    """
-    if face_bgr is None or face_bgr.size == 0:
+def _average_emotion_probabilities(results, labels):
+    """Average probability dictionaries from multiple expression predictions."""
+    if not results:
         return None
 
-    gray = cv2.cvtColor(face_bgr, cv2.COLOR_BGR2GRAY)
-    gray = cv2.resize(
-        gray,
-        (64, 64),
-        interpolation=cv2.INTER_AREA,
+    averaged = {}
+    for label in labels:
+        values = [
+            item["probabilities"].get(label, 0.0)
+            for item in results
+        ]
+        averaged[label] = float(np.mean(values))
+
+    total = sum(averaged.values())
+    if total > 0:
+        averaged = {
+            label: value / total
+            for label, value in averaged.items()
+        }
+
+    return averaged
+
+
+def _align_face_for_mobilefer(frame, face_row):
+    """Align a YuNet 5-landmark face for the OpenCV MobileFaceNet model."""
+    landmarks = np.asarray(face_row[4:14], dtype=np.float32).reshape(5, 2)
+
+    reference = np.array(
+        [
+            [38.2946, 51.6963],
+            [73.5318, 51.5014],
+            [56.0252, 71.7366],
+            [41.5493, 92.3655],
+            [70.7299, 92.2041],
+        ],
+        dtype=np.float32,
     )
 
-    # FERPlus expects N x 1 x 64 x 64.
-    input_tensor = gray.astype(np.float32)[None, None, :, :]
-    input_name = fer_session.get_inputs()[0].name
+    transform_matrix, _ = cv2.estimateAffinePartial2D(
+        landmarks,
+        reference,
+        method=cv2.LMEDS,
+    )
+
+    if transform_matrix is None:
+        return None
+
+    return cv2.warpAffine(
+        frame,
+        transform_matrix,
+        (112, 112),
+        flags=cv2.INTER_LINEAR,
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=(0, 0, 0),
+    )
+
+
+def verify_mobileface_expression(frame, face_row):
+    """
+    Predict visible facial expression using the OpenCV Zoo MobileFaceNet
+    Progressive Teacher model.
+
+    Advisory only. This branch never changes the trained stress prediction.
+    """
+    if mobilefer_session is None or frame is None or face_row is None:
+        return None
+
+    aligned = _align_face_for_mobilefer(frame, face_row)
+
+    if aligned is None:
+        return None
+
+    image = cv2.cvtColor(aligned, cv2.COLOR_BGR2RGB)
+    image = image.astype(np.float32) / 255.0
+    image = (image - 0.5) / 0.5
+    input_tensor = np.transpose(image, (2, 0, 1))[None, :, :, :]
+
+    input_name = mobilefer_session.get_inputs()[0].name
 
     try:
-        outputs = fer_session.run(
+        outputs = mobilefer_session.run(
             None,
             {input_name: input_tensor},
         )
-    except Exception as exc:
-        st.warning(
-            "Facial-expression verification unavailable. "
-            f"Stress prediction is unchanged. ({exc})"
-        )
+    except Exception:
         return None
 
     if not outputs:
         return None
 
-    probabilities = _softmax(outputs[0])
+    scores = np.asarray(outputs[0], dtype=np.float32).reshape(-1)
 
-    if probabilities.shape[0] != len(FER_LABELS):
-        raise RuntimeError(
-            "FER model output does not contain 8 emotion scores. "
-            f"Received shape: {np.asarray(outputs[0]).shape}"
-        )
+    if scores.shape[0] != len(MOBILEFER_LABELS):
+        return None
+
+    probabilities = _softmax(scores)
 
     emotion_probabilities = {
         label: float(probabilities[index])
-        for index, label in enumerate(FER_LABELS)
+        for index, label in enumerate(MOBILEFER_LABELS)
     }
 
     top_emotion = max(
@@ -604,6 +700,98 @@ def verify_facial_expression(face_bgr):
         "top_emotion": top_emotion,
         "probabilities": emotion_probabilities,
     }
+
+
+def verify_facial_expression(face_bgr, frame=None, face_row=None):
+    """
+    Combine two open-source facial-expression models for advisory evidence.
+
+    FERPlus uses the face crop. OpenCV MobileFaceNet uses YuNet landmarks
+    for a standardized 112x112 aligned face. Neither model changes the
+    trained stress probabilities or the 40/60 fusion decision.
+    """
+    if face_bgr is None or face_bgr.size == 0:
+        return None
+
+    # ---- FERPlus ----
+    fer_result = None
+
+    gray = cv2.cvtColor(face_bgr, cv2.COLOR_BGR2GRAY)
+    gray = cv2.resize(
+        gray,
+        (64, 64),
+        interpolation=cv2.INTER_AREA,
+    )
+
+    input_tensor = gray.astype(np.float32)[None, None, :, :]
+    input_name = fer_session.get_inputs()[0].name
+
+    try:
+        outputs = fer_session.run(
+            None,
+            {input_name: input_tensor},
+        )
+        if outputs:
+            probabilities = _softmax(outputs[0])
+
+            if probabilities.shape[0] == len(FER_LABELS):
+                fer_probabilities = {
+                    label: float(probabilities[index])
+                    for index, label in enumerate(FER_LABELS)
+                }
+                fer_result = {
+                    "top_emotion": max(
+                        fer_probabilities,
+                        key=fer_probabilities.get,
+                    ),
+                    "probabilities": fer_probabilities,
+                }
+    except Exception:
+        fer_result = None
+
+    mobile_result = None
+    if frame is not None and face_row is not None:
+        mobile_result = verify_mobileface_expression(
+            frame,
+            face_row,
+        )
+
+    if fer_result is None and mobile_result is None:
+        return None
+
+    # Average only emotions shared by both models when both are available.
+    if fer_result is not None and mobile_result is not None:
+        shared_labels = FER_LABELS
+        combined = {}
+
+        for label in shared_labels:
+            mobile_value = mobile_result["probabilities"].get(label, 0.0)
+            fer_value = fer_result["probabilities"].get(label, 0.0)
+            combined[label] = float(
+                0.5 * fer_value + 0.5 * mobile_value
+            )
+
+        top_emotion = max(
+            combined,
+            key=combined.get,
+        )
+
+        return {
+            "top_emotion": top_emotion,
+            "probabilities": combined,
+            "ferplus": fer_result,
+            "mobileface": mobile_result,
+        }
+
+    result = fer_result if fer_result is not None else mobile_result
+    result = dict(result)
+
+    if fer_result is not None:
+        result["ferplus"] = fer_result
+    if mobile_result is not None:
+        result["mobileface"] = mobile_result
+
+    return result
 
 
 def retrieve_rag_context(query, top_k=3):
@@ -701,9 +889,29 @@ def show_expression_verification(expression_result):
     st.markdown("### Facial Expression Verification")
 
     st.write(
-        f"**Detected expression:** "
+        f"**Combined expression:** "
         f"`{expression_result['top_emotion'].title()}`"
     )
+
+    model_cols = st.columns(2)
+
+    with model_cols[0]:
+        ferplus = expression_result.get("ferplus")
+        st.caption("FERPlus")
+        st.write(
+            ferplus["top_emotion"].title()
+            if ferplus
+            else "Unavailable"
+        )
+
+    with model_cols[1]:
+        mobileface = expression_result.get("mobileface")
+        st.caption("MobileFaceNet")
+        st.write(
+            mobileface["top_emotion"].title()
+            if mobileface
+            else "Unavailable"
+        )
 
     probabilities = sorted(
         expression_result["probabilities"].items(),
@@ -727,6 +935,8 @@ def show_result(
     face_probability=None,
     voice_probability=None,
     expression_result=None,
+    decision_override=None,
+    decision_reason=None,
 ):
 
     if fusion_probability is None:
@@ -738,8 +948,10 @@ def show_result(
 
         return
 
-    prediction = final_prediction(
-        fusion_probability
+    prediction = (
+        decision_override
+        if decision_override is not None
+        else final_prediction(fusion_probability)
     )
 
     if prediction:
@@ -750,6 +962,7 @@ def show_result(
                 <div class="result-heading">⚠ STRESS DETECTED</div>
                 <div class="result-detail">
                     Fusion score: {fusion_probability:.1%}
+                    {f"<br><small>{decision_reason}</small>" if decision_reason else ""}
                 </div>
             </div>
             """,
@@ -764,6 +977,7 @@ def show_result(
                 <div class="result-heading">✓ No Stress Detected</div>
                 <div class="result-detail">
                     Fusion score: {fusion_probability:.1%}
+                    {f"<br><small>{decision_reason}</small>" if decision_reason else ""}
                 </div>
             </div>
             """,
@@ -903,15 +1117,21 @@ def analyze_uploaded_video(video_bytes):
             if not success:
                 continue
 
-            face = detect_face(frame)
+            face_data = detect_face_data(frame)
 
-            if face is not None:
+            if face_data is not None:
+                face, face_row = face_data
+
                 feature = face_embedding(face)
 
                 if feature is not None:
                     embeddings.append(feature)
 
-                expression = verify_facial_expression(face)
+                expression = verify_facial_expression(
+                    face,
+                    frame=frame,
+                    face_row=face_row,
+                )
 
                 if expression is not None:
                     expression_predictions.append(expression)
@@ -1051,22 +1271,47 @@ def analyze_uploaded_video(video_bytes):
 class LiveState:
 
     def __init__(self):
-
         self.lock = threading.Lock()
 
-        self.latest_frame = None
+        # Rolling video buffer. Live inference samples several frames
+        # from this buffer to match the offline multi-frame face pipeline.
+        self.frame_buffer = deque(maxlen=30)
 
-        self.audio_chunks = deque(
-            maxlen=200
-        )
-
+        self.audio_chunks = deque(maxlen=200)
         self.sample_rate = AUDIO_SR
+
+        # Temporal smoothing for live probabilities.
+        self.face_history = deque(maxlen=5)
+        self.voice_history = deque(maxlen=5)
+        self.fusion_history = deque(maxlen=5)
+
+        # Raw expression consensus history. Each item stores the two
+        # expression-model results from one live analysis cycle.
+        self.expression_history = deque(maxlen=7)
+
+        # Smoothed probabilities are kept separately from the history so
+        # the EMA does not depend on Streamlit rerun timing.
+        self.face_ema = None
+        self.voice_ema = None
+        self.fusion_ema = None
 
         self.running = False
 
+    def reset_for_new_stream(self):
+        with self.lock:
+            self.frame_buffer.clear()
+            self.audio_chunks.clear()
+            self.face_history.clear()
+            self.voice_history.clear()
+            self.fusion_history.clear()
+            self.expression_history.clear()
+            self.face_ema = None
+            self.voice_ema = None
+            self.fusion_ema = None
+            self.sample_rate = AUDIO_SR
+
 
 if "live_state" not in st.session_state:
-
     st.session_state.live_state = LiveState()
 
 
@@ -1080,7 +1325,6 @@ live_state = st.session_state.live_state
 class VideoProcessor:
 
     def __init__(self, state):
-
         self.state = state
 
     def recv(self, frame):
@@ -1090,8 +1334,9 @@ class VideoProcessor:
         )
 
         with self.state.lock:
-
-            self.state.latest_frame = image.copy()
+            self.state.frame_buffer.append(
+                image.copy()
+            )
 
         return av.VideoFrame.from_ndarray(
             image,
@@ -1102,7 +1347,6 @@ class VideoProcessor:
 class AudioProcessor:
 
     def __init__(self, state):
-
         self.state = state
 
     def recv(self, frame):
@@ -1118,9 +1362,7 @@ class AudioProcessor:
         sample_rate = frame.sample_rate
 
         with self.state.lock:
-
             self.state.sample_rate = sample_rate
-
             self.state.audio_chunks.append(
                 audio.copy()
             )
@@ -1136,10 +1378,8 @@ def get_live_snapshot():
 
     with live_state.lock:
 
-        frame = (
-            live_state.latest_frame.copy()
-            if live_state.latest_frame is not None
-            else None
+        frames = list(
+            live_state.frame_buffer
         )
 
         audio_chunks = list(
@@ -1164,10 +1404,124 @@ def get_live_snapshot():
         audio = audio[-max_samples:]
 
     else:
-
         audio = None
 
-    return frame, audio, sample_rate
+    return frames, audio, sample_rate
+
+
+def _ema(previous, value, alpha=LIVE_EMA_ALPHA):
+    """Exponential moving average for stable live probabilities."""
+    if value is None:
+        return previous
+    value = float(value)
+    if previous is None:
+        return value
+    return float(alpha * value + (1.0 - alpha) * previous)
+
+
+def _stress_confirmation(history):
+    """Require persistent stress evidence instead of one threshold crossing."""
+    if not history:
+        return None
+    recent = list(history)[-LIVE_DECISION_WINDOW:]
+    required = LIVE_STRESS_CONFIRMATIONS
+    if len(recent) < required:
+        # During warm-up, use the smoothed probability normally.
+        return None
+    stress_votes = sum(float(p) >= THRESHOLD for p in recent)
+    return stress_votes >= required
+
+
+def _expression_consensus(history):
+    """
+    Return a strong low-stress expression consensus only when BOTH
+    expression models agree and the agreement persists.
+    """
+    if not history:
+        return None
+
+    recent = list(history)[-LIVE_DECISION_WINDOW:]
+    qualifying = []
+
+    for item in recent:
+        fer = item.get("ferplus")
+        mobile = item.get("mobileface")
+        if not fer or not mobile:
+            continue
+
+        fer_probs = fer.get("probabilities", {})
+        mobile_probs = mobile.get("probabilities", {})
+
+        # Shared low-stress expressions only. Surprise/sad are intentionally
+        # excluded because they are ambiguous for stress interpretation.
+        for label in ("happy", "neutral"):
+            fer_conf = float(fer_probs.get(label, 0.0))
+            mob_conf = float(mobile_probs.get(label, 0.0))
+            if (
+                fer_conf >= LIVE_LOW_STRESS_EXPRESSION_CONFIDENCE
+                and mob_conf >= LIVE_LOW_STRESS_EXPRESSION_CONFIDENCE
+            ):
+                qualifying.append(label)
+                break
+
+    if len(qualifying) < LIVE_EXPRESSION_CONFIRMATIONS:
+        return None
+
+    # Require the same low-stress expression to dominate the qualifying
+    # observations rather than mixing happy and neutral arbitrarily.
+    counts = {label: qualifying.count(label) for label in ("happy", "neutral")}
+    label = max(counts, key=counts.get)
+
+    if counts[label] >= LIVE_EXPRESSION_CONFIRMATIONS:
+        return label
+
+    return None
+
+
+def _average_live_expressions(history):
+
+    if not history:
+        return None
+
+    labels = FER_LABELS
+    averaged = {
+        label: float(
+            np.mean(
+                [
+                    item["probabilities"].get(label, 0.0)
+                    for item in history
+                ]
+            )
+        )
+        for label in labels
+    }
+
+    total = sum(averaged.values())
+
+    if total > 0:
+        averaged = {
+            label: value / total
+            for label, value in averaged.items()
+        }
+
+    result = {
+        "top_emotion": max(
+            averaged,
+            key=averaged.get,
+        ),
+        "probabilities": averaged,
+    }
+
+    # Keep latest model-specific diagnostics for UI.
+    latest = history[-1]
+
+    if "ferplus" in latest:
+        result["ferplus"] = latest["ferplus"]
+
+    if "mobileface" in latest:
+        result["mobileface"] = latest["mobileface"]
+
+    return result
 
 
 # ============================================================
@@ -1175,53 +1529,159 @@ def get_live_snapshot():
 # ============================================================
 
 def analyze_live():
+    """
+    Live inference using the same multi-frame ResNet mean-pooling strategy
+    as the offline face pipeline, plus temporal probability smoothing and
+    conservative expression-consensus correction.
+    """
+    frames, audio, sample_rate = get_live_snapshot()
 
-    frame, audio, sample_rate = get_live_snapshot()
+    if not frames:
+        return None, None, None, None, None
 
-    if frame is None:
-        return None, None, None
-
-    face = detect_face(frame)
-
-    face_feature = (
-        face_embedding(face)
-        if face is not None
-        else None
+    # Use several recent frames instead of a single frame. The offline
+    # pipeline also mean-pools multiple face embeddings.
+    sample_count = min(5, len(frames))
+    sample_indices = np.linspace(
+        max(0, len(frames) - 20),
+        len(frames) - 1,
+        sample_count,
+        dtype=int,
     )
 
-    expression_result = (
-        verify_facial_expression(face)
-        if face is not None
-        else None
-    )
+    embeddings = []
+    expression_predictions = []
 
-    voice_feature = None
+    for index in np.unique(sample_indices):
+        frame = frames[int(index)]
 
-    if audio is not None:
+        face_data = detect_face_data(frame)
+        if face_data is None:
+            continue
 
-        voice_feature = extract_voice_features(
-            audio,
-            sample_rate,
+        face, face_row = face_data
+
+        feature = face_embedding(face)
+        if feature is not None:
+            embeddings.append(feature)
+
+        expression = verify_facial_expression(
+            face,
+            frame=frame,
+            face_row=face_row,
         )
+        if expression is not None:
+            expression_predictions.append(expression)
 
-    face_probability = predict_face(
-        face_feature
+    face_feature = None
+    if embeddings:
+        face_feature = np.mean(
+            np.stack(embeddings),
+            axis=0,
+        ).astype(np.float32)
+
+    face_probability = predict_face(face_feature)
+
+    # Do not let near-silent microphone windows generate a misleading voice
+    # stress probability. This uses only NumPy/audio already in the app.
+    voice_feature = None
+    audio_rms = None
+
+    if audio is not None and len(audio) > 0:
+        audio_rms = float(np.sqrt(np.mean(np.square(audio))))
+        if audio_rms >= LIVE_MIN_AUDIO_RMS:
+            voice_feature = extract_voice_features(
+                audio,
+                sample_rate,
+            )
+
+    voice_probability = predict_voice(voice_feature)
+
+    # EMA smooth each modality before fusion.
+    live_state.face_ema = _ema(
+        live_state.face_ema,
+        face_probability,
     )
-
-    voice_probability = predict_voice(
-        voice_feature
+    live_state.voice_ema = _ema(
+        live_state.voice_ema,
+        voice_probability,
     )
 
     fusion_probability = fuse_predictions(
-        face_probability,
-        voice_probability,
+        live_state.face_ema,
+        live_state.voice_ema,
     )
 
-    return (
-        face_probability,
-        voice_probability,
+    live_state.fusion_ema = _ema(
+        live_state.fusion_ema,
         fusion_probability,
+    )
+
+    # Keep a short decision history for persistence/debouncing.
+    if live_state.fusion_ema is not None:
+        live_state.fusion_history.append(
+            float(live_state.fusion_ema)
+        )
+
+    if expression_predictions:
+        for item in expression_predictions:
+            live_state.expression_history.append(item)
+
+    expression_result = _average_live_expressions(
+        live_state.expression_history
+    )
+
+    # Conservative decision correction:
+    # 1) Require persistent stress evidence across the live window.
+    # 2) If both open-source expression models strongly and persistently
+    #    agree on happy/neutral AND base stress is borderline, veto Stress.
+    decision_override = None
+    decision_reason = None
+
+    if live_state.fusion_ema is not None:
+        expression_consensus = _expression_consensus(
+            live_state.expression_history
+        )
+
+        if (
+            expression_consensus is not None
+            and live_state.fusion_ema < LIVE_VETO_STRESS_LIMIT
+        ):
+            decision_override = False
+            decision_reason = (
+                "FERPlus and MobileFaceNet consistently agree on a "
+                f"high-confidence {expression_consensus} expression while "
+                "the multimodal stress score is borderline."
+            )
+        else:
+            confirmed = _stress_confirmation(
+                live_state.fusion_history
+            )
+            if confirmed is True:
+                decision_override = True
+                decision_reason = (
+                    "Stress signal persisted across multiple live analysis "
+                    "windows."
+                )
+            elif confirmed is False:
+                decision_override = False
+                decision_reason = (
+                    "The smoothed stress signal did not persist across "
+                    "multiple live analysis windows."
+                )
+
+    # Return the smoothed probabilities plus an optional live-only decision
+    # override. The numerical model probabilities themselves are unchanged.
+    return (
+        live_state.face_ema,
+        live_state.voice_ema,
+        live_state.fusion_ema,
         expression_result,
+        {
+            "override": decision_override,
+            "reason": decision_reason,
+            "audio_rms": audio_rms,
+        },
     )
 
 
@@ -1323,9 +1783,14 @@ else:
 
     st.info(
         "Allow camera and microphone access. "
-        "The system continuously analyzes the latest video frame "
-        "and a rolling audio window."
+        "Live analysis uses multiple recent face frames and a rolling audio window."
     )
+
+    if mobilefer_session is None:
+        st.caption(
+            "MobileFaceNet expression verification is unavailable; "
+            "the stress model remains fully operational."
+        )
 
     webrtc_ctx = webrtc_streamer(
         key="stress-live",
@@ -1343,6 +1808,19 @@ else:
         async_processing=True,
     )
 
+    # Reset rolling state whenever a new live session starts so previous
+    # predictions cannot bias the next session.
+    is_playing = bool(webrtc_ctx.state.playing)
+    was_playing = st.session_state.get(
+        "live_was_playing",
+        False,
+    )
+
+    if is_playing and not was_playing:
+        live_state.reset_for_new_stream()
+
+    st.session_state.live_was_playing = is_playing
+
     # Live prediction refresh
     if webrtc_ctx.state.playing:
 
@@ -1356,6 +1834,7 @@ else:
                     voice_probability,
                     fusion_probability,
                     expression_result,
+                    live_decision,
                 ) = analyze_live()
 
                 if fusion_probability is None:
@@ -1371,11 +1850,13 @@ else:
                     face_probability,
                     voice_probability,
                     expression_result,
+                    decision_override=live_decision.get("override"),
+                    decision_reason=live_decision.get("reason"),
                 )
 
                 st.caption(
-                    "Live prediction updates every ~2 seconds "
-                    "using the latest video frame and recent audio."
+                    "Live prediction uses multi-frame face pooling, "
+                    "temporal smoothing, and persistent expression evidence."
                 )
 
             except Exception as e:
@@ -1404,6 +1885,174 @@ else:
             unsafe_allow_html=True,
         )
 
+
+# ============================================================
+# MODEL PIPELINE & HOW IT WORKS
+# ============================================================
+
+st.divider()
+
+st.markdown('<div class="section-lab">Model Pipeline</div>', unsafe_allow_html=True)
+
+st.html("""
+<div class="pipeline-wrap">
+
+  <div class="pipe-row">
+    <div class="pipe-box pipe-input">
+      <div class="pipe-icon">🎥</div>
+      <div class="pipe-title">Video Input</div>
+      <div class="pipe-desc">You upload a video or stream live camera footage.
+      The video must contain a visible face and audible speech.</div>
+    </div>
+  </div>
+
+  <div class="pipe-arrow">↓</div>
+
+  <div class="pipe-split">
+
+    <div class="pipe-track">
+      <div class="pipe-track-label">👤 Face Track</div>
+
+      <div class="pipe-box">
+        <div class="pipe-title">YuNet — Face Detection</div>
+        <div class="pipe-desc">Finds the person's face in the video frame.
+        Only the face region is passed forward; the background is ignored.</div>
+      </div>
+
+      <div class="pipe-arrow">↓</div>
+
+      <div class="pipe-box">
+        <div class="pipe-title">ResNet18 — Feature Encoder</div>
+        <div class="pipe-desc">A deep neural network that converts the face image
+        into 512 numbers capturing subtle visual patterns linked to stress.</div>
+      </div>
+
+      <div class="pipe-arrow">↓</div>
+
+      <div class="pipe-box pipe-model">
+        <div class="pipe-title">Face Classifier (MLP)</div>
+        <div class="pipe-desc">Reads those 512 numbers and outputs a stress
+        probability between 0 and 1. Weight in fusion: <b>40%</b>.</div>
+      </div>
+
+      <div class="pipe-arrow">↘</div>
+    </div>
+
+    <div class="pipe-track">
+      <div class="pipe-track-label">🎙️ Voice Track</div>
+
+      <div class="pipe-box">
+        <div class="pipe-title">Audio Extraction</div>
+        <div class="pipe-desc">The audio channel is pulled from the video
+        and resampled to 16 kHz for consistent processing.</div>
+      </div>
+
+      <div class="pipe-arrow">↓</div>
+
+      <div class="pipe-box">
+        <div class="pipe-title">MFCC — Voice Features</div>
+        <div class="pipe-desc">Mel-Frequency Cepstral Coefficients capture
+        speech texture — pitch, energy, tempo — producing 240 numbers
+        (MFCC + delta + delta-delta, mean &amp; std).</div>
+      </div>
+
+      <div class="pipe-arrow">↓</div>
+
+      <div class="pipe-box pipe-model">
+        <div class="pipe-title">Voice Classifier (Logistic Regression)</div>
+        <div class="pipe-desc">Reads those 240 numbers and outputs a stress
+        probability. Weight in fusion: <b>60%</b>.</div>
+      </div>
+
+      <div class="pipe-arrow">↙</div>
+    </div>
+  </div>
+
+  <div class="pipe-row">
+    <div class="pipe-box pipe-fusion">
+      <div class="pipe-icon">⚖️</div>
+      <div class="pipe-title">Late Fusion</div>
+      <div class="pipe-desc">
+        The two probabilities are combined into one final score:<br>
+        <code>Final = 0.40 × Face + 0.60 × Voice</code><br>
+        The trained fusion configuration gives voice a 60% weight and face a 40% weight.
+      </div>
+    </div>
+  </div>
+
+  <div class="pipe-arrow">↓</div>
+
+  <div class="pipe-row pipe-row-split2">
+    <div class="pipe-box pipe-stress">
+      <div class="pipe-icon">⚠️</div>
+      <div class="pipe-title">Stress Detected</div>
+      <div class="pipe-desc">Final score ≥ 0.50</div>
+    </div>
+    <div class="pipe-box pipe-safe">
+      <div class="pipe-icon">✓</div>
+      <div class="pipe-title">No Stress</div>
+      <div class="pipe-desc">Final score &lt; 0.50</div>
+    </div>
+  </div>
+
+  <div class="pipe-support-label">Supporting Layers — do not change the stress prediction</div>
+
+  <div class="pipe-row pipe-row-split2">
+    <div class="pipe-box pipe-support">
+      <div class="pipe-icon">🙂</div>
+      <div class="pipe-title">FERPlus + MobileFaceNet — Expression Verification</div>
+      <div class="pipe-desc">Open-source expression models check the face for visible
+      emotions (happy, sad, angry, fear, neutral …). It provides supporting
+      evidence — a disagreement is reported, <em>not</em> used to override the stress score.</div>
+    </div>
+    <div class="pipe-box pipe-support">
+      <div class="pipe-icon">📖</div>
+      <div class="pipe-title">RAG — Grounded Explanation</div>
+      <div class="pipe-desc">Retrieval-Augmented Generation searches a
+      built-in knowledge base and writes a plain-English explanation
+      of why the model made its decision. No external API is used.</div>
+    </div>
+  </div>
+
+</div>
+""")
+
+# ---- How It Works ----
+st.markdown('<div class="section-lab">How It Works</div>', unsafe_allow_html=True)
+
+steps = [
+    ("01", "Capture", "🎬",
+     "Upload a video (or go live) showing a person speaking. Both face and audible speech are needed for the best prediction."),
+    ("02", "Analyze the Face", "👤",
+     "The system finds the face using YuNet, then runs it through ResNet-18 — a neural network that extracts 512 visual features tied to stress-related appearance."),
+    ("03", "Analyze the Voice", "🎙️",
+     "Audio is converted into MFCC features — a compact fingerprint of how speech sounds, capturing pitch, energy, and tempo, which all change under stress."),
+    ("04", "Combine the Signals", "⚖️",
+     "The face model and voice model each produce an independent stress probability. They are blended (40% face + 60% voice). A final score ≥ 0.50 means stress is detected."),
+    ("05", "Verify & Explain", "📖",
+     "FERPlus checks the visible facial expression. RAG generates a plain-English explanation. Neither changes the stress score — they help you understand the result."),
+]
+
+step_cols = st.columns(5)
+for i, (num, title, icon, desc) in enumerate(steps):
+    with step_cols[i]:
+        st.markdown(
+            f"""
+            <div style="padding: 16px 14px; border: 1px solid var(--border-subtle);
+                        border-top: 3px solid var(--accent-main);
+                        border-radius: var(--radius-md);
+                        background: var(--bg-surface);
+                        height: 100%;">
+              <div style="font-size: 11px; font-weight: 700; letter-spacing: 0.08em;
+                          color: var(--accent-warm); margin-bottom: 6px;">{num}</div>
+              <div style="font-size: 18px; margin-bottom: 4px;">{icon}</div>
+              <div style="font-size: 14px; font-weight: 700; color: var(--text-primary);
+                          margin-bottom: 8px;">{title}</div>
+              <div style="font-size: 13px; color: var(--text-secondary); line-height: 1.6;">{desc}</div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
 
 # ============================================================
 # FOOTER
