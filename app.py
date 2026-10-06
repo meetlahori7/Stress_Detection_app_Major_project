@@ -49,15 +49,6 @@ FACE_WEIGHT = 0.40
 VOICE_WEIGHT = 0.60
 THRESHOLD = 0.50
 
-# Expression consistency gate. The original app always let the trained
-# stress classifier win, even when both expression models strongly agreed
-# on a low-stress expression. This gate prevents that specific false-positive
-# pattern without retraining or adding another model.
-EXPRESSION_GATE_ENABLED = True
-EXPRESSION_GATE_MIN_FER_CONFIDENCE = 0.60
-EXPRESSION_GATE_MAX_FUSION = 0.90
-LOW_STRESS_EXPRESSIONS = {"happy", "neutral"}
-
 AUDIO_SR = 16000
 AUDIO_WINDOW_SECONDS = 3.0
 
@@ -105,8 +96,8 @@ RAG_DOCUMENTS = [
     "The final stress prediction uses late fusion with 40 percent face probability and 60 percent voice probability.",
     "The stress decision threshold is 0.50. This project uses emotion-derived proxy labels, not clinically validated stress labels.",
     "Facial-expression recognition identifies visible expressions such as happy, sad, angry, fear, disgust, surprise, neutral and contempt. Expression is not the same thing as a person's actual emotional or stress state.",
-    "A disagreement between the stress classifier and facial-expression verifier should be reported. When both expression models strongly agree on happy or neutral, the application uses a conservative expression-consistency gate to prevent a borderline stress false positive; this does not retrain the stress model.",
-    "Happy or neutral facial expression can coexist with stress signals from voice or other modalities. Angry, fearful or disgust expressions can also occur without actual stress.",
+    "The final application decision is driven by the local open-source facial-expression models when a usable expression prediction is available. The trained multimodal stress classifier is secondary evidence and is used as a fallback when expression verification is unavailable or ambiguous.",
+    "For this application decision layer, happy or neutral is mapped to No Stress, while angry, fearful or disgust is mapped to Stress. This is an application-level proxy rule, not a clinically validated stress diagnosis. The trained multimodal classifier remains secondary evidence.",
     "Sad and surprise are treated as ambiguous for binary stress consistency checking because they do not provide a reliable binary stress decision.",
 ]
 
@@ -562,77 +553,6 @@ def final_prediction(probability):
         return None
 
     return probability >= THRESHOLD
-
-
-def expression_consistency_gate(fusion_probability, expression_result):
-    """
-    Decide whether strong expression evidence should veto a stress false
-    positive. This is a decision-layer rule, not a new ML model.
-
-    We only veto when: 
-      1. both FERPlus and MobileFaceNet are available,
-      2. both agree on happy/neutral,
-      3. FERPlus gives that expression >= 60%, and
-      4. the multimodal stress score is below 90%.
-
-    The 90% ceiling prevents the expression model from overriding a very
-    strong multimodal stress signal.
-    """
-    if not EXPRESSION_GATE_ENABLED or fusion_probability is None:
-        return None
-
-    if not expression_result:
-        return None
-
-    fer = expression_result.get("ferplus") or {}
-    mobile = expression_result.get("mobileface") or {}
-
-    if fer.get("status") != "ready" or mobile.get("status") != "ready":
-        return None
-
-    fer_emotion = fer.get("top_emotion")
-    mobile_emotion = mobile.get("top_emotion")
-
-    if fer_emotion != mobile_emotion:
-        return None
-
-    if fer_emotion not in LOW_STRESS_EXPRESSIONS:
-        return None
-
-    fer_confidence = float(
-        (fer.get("probabilities") or {}).get(fer_emotion, 0.0)
-    )
-
-    if fer_confidence < EXPRESSION_GATE_MIN_FER_CONFIDENCE:
-        return None
-
-    if fusion_probability >= EXPRESSION_GATE_MAX_FUSION:
-        return None
-
-    return {
-        "prediction": False,
-        "expression": fer_emotion,
-        "fer_confidence": fer_confidence,
-        "reason": (
-            f"Both facial-expression models agree on {fer_emotion} "
-            f"(FERPlus {fer_confidence:.1%}); the stress result was "
-            "classified as a facial-expression contradiction."
-        ),
-    }
-
-
-def get_final_decision(fusion_probability, expression_result):
-    """Return (boolean decision, reason)."""
-    base_prediction = final_prediction(fusion_probability)
-    gate = expression_consistency_gate(
-        fusion_probability,
-        expression_result,
-    )
-
-    if gate is not None and base_prediction is True:
-        return False, gate["reason"]
-
-    return base_prediction, None
 
 
 # ============================================================
@@ -1120,6 +1040,159 @@ def show_expression_verification(expression_result):
             st.metric(label.title(), f"{score:.1%}")
 
 
+
+# ============================================================
+# FINAL DECISION LAYER
+# ============================================================
+
+# The user-facing decision hierarchy is intentionally:
+#   1. Local open-source facial-expression models
+#   2. Trained multimodal stress model as SECONDARY / fallback
+#
+# The expression models do not natively predict clinical stress. Therefore
+# this application uses the project's explicit emotion->stress proxy mapping:
+#   happy, neutral                 -> No Stress
+#   angry, fear, disgust           -> Stress
+#   sad, surprise, contempt       -> Ambiguous -> use trained model fallback
+#
+# This makes the hierarchy deterministic and prevents a 99% stress score from
+# overriding a high-confidence Neutral/Happy expression result.
+
+EXPRESSION_NO_STRESS = {"happy", "neutral"}
+EXPRESSION_STRESS = {"angry", "fear", "disgust"}
+EXPRESSION_AMBIGUOUS = {"sad", "surprise", "contempt"}
+
+
+def get_expression_primary_decision(expression_result):
+    """
+    Return (decision, reason) from the local open-source expression models.
+
+    decision:
+        True  -> Stress
+        False -> No Stress
+        None  -> expression evidence unavailable/ambiguous
+
+    FERPlus supplies confidence. MobileFaceNet supplies a class label.
+    If both models are available and agree, that is the strongest primary
+    evidence. If they disagree, FERPlus is used because it provides a
+    probability distribution; MobileFaceNet remains an independent check.
+    """
+    if not expression_result:
+        return None, "Open-source expression verification unavailable."
+
+    top = expression_result.get("top_emotion")
+    if not top:
+        return None, "Open-source expression verification unavailable."
+
+    fer = expression_result.get("ferplus") or {}
+    mobile = expression_result.get("mobileface") or {}
+
+    fer_ready = fer.get("status") == "ready" and fer.get("top_emotion")
+    mobile_ready = mobile.get("status") == "ready" and mobile.get("top_emotion")
+
+    # Prefer explicit per-model outputs over an averaged/aggregated label.
+    fer_top = fer.get("top_emotion") if fer_ready else None
+    mobile_top = mobile.get("top_emotion") if mobile_ready else None
+
+    # Both models agree.
+    if fer_top and mobile_top and fer_top == mobile_top:
+        emotion = fer_top
+        if emotion in EXPRESSION_NO_STRESS:
+            return False, (
+                f"FERPlus and MobileFaceNet both identify {emotion.title()}; "
+                "open-source expression decision = No Stress."
+            )
+        if emotion in EXPRESSION_STRESS:
+            return True, (
+                f"FERPlus and MobileFaceNet both identify {emotion.title()}; "
+                "open-source expression decision = Stress."
+            )
+        return None, (
+            f"Both open-source expression models identify {emotion.title()}, "
+            "which is ambiguous for the project's binary stress proxy."
+        )
+
+    # FERPlus is available. It is the preferred resolver when the two
+    # expression models disagree because it exposes a probability distribution.
+    if fer_top:
+        fer_probs = fer.get("probabilities") or {}
+        fer_conf = float(fer_probs.get(fer_top, 0.0))
+
+        if fer_top in EXPRESSION_NO_STRESS:
+            return False, (
+                f"FERPlus identifies {fer_top.title()} ({fer_conf:.1%}); "
+                "open-source expression decision = No Stress. "
+                "The trained stress model is secondary."
+            )
+
+        if fer_top in EXPRESSION_STRESS:
+            return True, (
+                f"FERPlus identifies {fer_top.title()} ({fer_conf:.1%}); "
+                "open-source expression decision = Stress. "
+                "The trained stress model is secondary."
+            )
+
+        # Sad/surprise/contempt do not have a deterministic binary mapping.
+        return None, (
+            f"FERPlus identifies {fer_top.title()} ({fer_conf:.1%}), "
+            "which is ambiguous for the binary stress proxy; "
+            "trained multimodal stress model used as secondary fallback."
+        )
+
+    # MobileFaceNet only.
+    if mobile_top:
+        if mobile_top in EXPRESSION_NO_STRESS:
+            return False, (
+                f"MobileFaceNet identifies {mobile_top.title()}; "
+                "open-source expression decision = No Stress. "
+                "The trained stress model is secondary."
+            )
+
+        if mobile_top in EXPRESSION_STRESS:
+            return True, (
+                f"MobileFaceNet identifies {mobile_top.title()}; "
+                "open-source expression decision = Stress. "
+                "The trained stress model is secondary."
+            )
+
+        return None, (
+            f"MobileFaceNet identifies {mobile_top.title()}, "
+            "which is ambiguous for the binary stress proxy; "
+            "trained multimodal stress model used as secondary fallback."
+        )
+
+    return None, "Open-source expression verification unavailable."
+
+
+def get_final_decision(fusion_probability, expression_result):
+    """
+    Determine the user-facing stress result.
+
+    Open-source expression verification has priority whenever it yields a
+    mapped expression. The trained stress model is secondary and is only
+    used when expression evidence is unavailable or ambiguous.
+    """
+    expression_decision, reason = get_expression_primary_decision(
+        expression_result
+    )
+
+    if expression_decision is not None:
+        return expression_decision, reason
+
+    # Secondary fallback.
+    if fusion_probability is None:
+        return None, "No usable stress or expression evidence is available."
+
+    return (
+        final_prediction(fusion_probability),
+        reason + (
+            f" Secondary trained-model fallback: "
+            f"{fusion_probability:.1%} fusion probability."
+        ),
+    )
+
+
+
 # ============================================================
 # RESULT DISPLAY
 # ============================================================
@@ -1174,9 +1247,7 @@ def show_result(
         )
 
     if decision_reason:
-        st.info(
-            f"Expression consistency check: {decision_reason}"
-        )
+        st.info(f"**Final decision basis:** {decision_reason}")
 
     st.write("")
 
@@ -1992,7 +2063,7 @@ st.html("""
       <div class="pipe-icon">⚖️</div>
       <div class="pipe-title">Late Fusion</div>
       <div class="pipe-desc">
-        The two probabilities are combined into one final score:<br>
+        The trained stress models produce a secondary evidence score:<br>
         <code>Final = 0.40 × Face + 0.60 × Voice</code><br>
         The trained fusion configuration gives voice a 60% weight and face a 40% weight.
       </div>
@@ -2014,7 +2085,7 @@ st.html("""
     </div>
   </div>
 
-  <div class="pipe-support-label">Supporting Layers — do not change the stress prediction</div>
+  <div class="pipe-support-label">Decision Layer — open-source expression models have priority</div>
 
   <div class="pipe-row pipe-row-split2">
     <div class="pipe-box pipe-support">
@@ -2047,9 +2118,9 @@ steps = [
     ("03", "Analyze the Voice", "🎙️",
      "Audio is converted into MFCC features — a compact fingerprint of how speech sounds, capturing pitch, energy, and tempo, which all change under stress."),
     ("04", "Combine the Signals", "⚖️",
-     "The face model and voice model each produce an independent stress probability. They are blended (40% face + 60% voice). A final score ≥ 0.50 means stress is detected."),
+     "The trained face and voice models produce a secondary 40%/60% stress score. The final user-facing decision is made by the local open-source facial-expression models when available."),
     ("05", "Verify & Explain", "📖",
-     "FERPlus checks the visible facial expression. RAG generates a plain-English explanation. Neither changes the stress score — they help you understand the result."),
+     "FERPlus checks the visible facial expression. RAG generates a plain-English explanation. These models have priority for the final application decision; the trained multimodal score is secondary."),
 ]
 
 step_cols = st.columns(5)
