@@ -49,6 +49,15 @@ FACE_WEIGHT = 0.40
 VOICE_WEIGHT = 0.60
 THRESHOLD = 0.50
 
+# Expression consistency gate. The original app always let the trained
+# stress classifier win, even when both expression models strongly agreed
+# on a low-stress expression. This gate prevents that specific false-positive
+# pattern without retraining or adding another model.
+EXPRESSION_GATE_ENABLED = True
+EXPRESSION_GATE_MIN_FER_CONFIDENCE = 0.60
+EXPRESSION_GATE_MAX_FUSION = 0.90
+LOW_STRESS_EXPRESSIONS = {"happy", "neutral"}
+
 AUDIO_SR = 16000
 AUDIO_WINDOW_SECONDS = 3.0
 
@@ -96,7 +105,7 @@ RAG_DOCUMENTS = [
     "The final stress prediction uses late fusion with 40 percent face probability and 60 percent voice probability.",
     "The stress decision threshold is 0.50. This project uses emotion-derived proxy labels, not clinically validated stress labels.",
     "Facial-expression recognition identifies visible expressions such as happy, sad, angry, fear, disgust, surprise, neutral and contempt. Expression is not the same thing as a person's actual emotional or stress state.",
-    "A disagreement between the stress classifier and facial-expression verifier should be reported as a modality or label disagreement, not used to overwrite the stress prediction.",
+    "A disagreement between the stress classifier and facial-expression verifier should be reported. When both expression models strongly agree on happy or neutral, the application uses a conservative expression-consistency gate to prevent a borderline stress false positive; this does not retrain the stress model.",
     "Happy or neutral facial expression can coexist with stress signals from voice or other modalities. Angry, fearful or disgust expressions can also occur without actual stress.",
     "Sad and surprise are treated as ambiguous for binary stress consistency checking because they do not provide a reliable binary stress decision.",
 ]
@@ -553,6 +562,77 @@ def final_prediction(probability):
         return None
 
     return probability >= THRESHOLD
+
+
+def expression_consistency_gate(fusion_probability, expression_result):
+    """
+    Decide whether strong expression evidence should veto a stress false
+    positive. This is a decision-layer rule, not a new ML model.
+
+    We only veto when: 
+      1. both FERPlus and MobileFaceNet are available,
+      2. both agree on happy/neutral,
+      3. FERPlus gives that expression >= 60%, and
+      4. the multimodal stress score is below 90%.
+
+    The 90% ceiling prevents the expression model from overriding a very
+    strong multimodal stress signal.
+    """
+    if not EXPRESSION_GATE_ENABLED or fusion_probability is None:
+        return None
+
+    if not expression_result:
+        return None
+
+    fer = expression_result.get("ferplus") or {}
+    mobile = expression_result.get("mobileface") or {}
+
+    if fer.get("status") != "ready" or mobile.get("status") != "ready":
+        return None
+
+    fer_emotion = fer.get("top_emotion")
+    mobile_emotion = mobile.get("top_emotion")
+
+    if fer_emotion != mobile_emotion:
+        return None
+
+    if fer_emotion not in LOW_STRESS_EXPRESSIONS:
+        return None
+
+    fer_confidence = float(
+        (fer.get("probabilities") or {}).get(fer_emotion, 0.0)
+    )
+
+    if fer_confidence < EXPRESSION_GATE_MIN_FER_CONFIDENCE:
+        return None
+
+    if fusion_probability >= EXPRESSION_GATE_MAX_FUSION:
+        return None
+
+    return {
+        "prediction": False,
+        "expression": fer_emotion,
+        "fer_confidence": fer_confidence,
+        "reason": (
+            f"Both facial-expression models agree on {fer_emotion} "
+            f"(FERPlus {fer_confidence:.1%}); the stress result was "
+            "classified as a facial-expression contradiction."
+        ),
+    }
+
+
+def get_final_decision(fusion_probability, expression_result):
+    """Return (boolean decision, reason)."""
+    base_prediction = final_prediction(fusion_probability)
+    gate = expression_consistency_gate(
+        fusion_probability,
+        expression_result,
+    )
+
+    if gate is not None and base_prediction is True:
+        return False, gate["reason"]
+
+    return base_prediction, None
 
 
 # ============================================================
@@ -1060,8 +1140,9 @@ def show_result(
 
         return
 
-    prediction = final_prediction(
-        fusion_probability
+    prediction, decision_reason = get_final_decision(
+        fusion_probability,
+        expression_result,
     )
 
     if prediction:
@@ -1090,6 +1171,11 @@ def show_result(
             </div>
             """,
             unsafe_allow_html=True,
+        )
+
+    if decision_reason:
+        st.info(
+            f"Expression consistency check: {decision_reason}"
         )
 
     st.write("")
