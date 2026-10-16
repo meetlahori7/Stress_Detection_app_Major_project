@@ -291,7 +291,15 @@ def mobilefer_label(b: Bundle, face: FaceCrop) -> str:
     blob = cv2.dnn.blobFromImage(img, 1.0, (112, 112), (0, 0, 0), swapRB=False, crop=False)
     b.mobilefer.setInput(blob, "data")
     out = b.mobilefer.forward("label")
-    idx = int(np.asarray(out).reshape(-1)[0])
+    scores = np.asarray(out).reshape(-1)
+    if scores.size != len(MOBILEFER_LABELS):
+        raise RuntimeError(
+            f"MobileFaceNet returned {scores.size} class scores, "
+            f"expected {len(MOBILEFER_LABELS)}"
+        )
+    # OpenCV Zoo's `label` output is a vector of seven class scores; choose
+    # the highest-scoring class rather than casting the first score to int.
+    idx = int(np.argmax(scores))
     if not 0 <= idx < len(MOBILEFER_LABELS):
         raise RuntimeError(f"MobileFaceNet label index {idx} out of range")
     return MOBILEFER_LABELS[idx]
