@@ -831,3 +831,263 @@ header[data-testid="stHeader"] *,
     min-height: 220px !important;
   }
 }
+
+/* ---------- Compact side-by-side analysis workspace ---------- */
+.main .block-container {
+  max-width: 1440px !important;
+  padding-top: 1.35rem !important;
+  padding-bottom: 2rem !important;
+}
+
+.hero-lab {
+  padding: 25px 32px !important;
+  margin-bottom: 22px !important;
+  background: linear-gradient(125deg, rgba(255,255,255,.97), rgba(250,244,229,.94)) !important;
+  box-shadow: 0 8px 28px rgba(117, 91, 48, .07) !important;
+}
+
+.hero-lab h1 {
+  font-size: clamp(27px, 3vw, 36px) !important;
+  line-height: 1.12 !important;
+}
+
+.hero-lab p {
+  max-width: 850px;
+}
+
+.panel-kicker {
+  color: var(--accent-warm) !important;
+  font-size: 11px !important;
+  font-weight: 800 !important;
+  letter-spacing: .1em !important;
+  margin: 0 0 10px !important;
+  text-transform: uppercase !important;
+}
+
+.preview-empty,
+.results-empty {
+  min-height: 230px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  padding: 24px;
+  text-align: center;
+  border: 1px dashed rgba(171, 121, 70, .35);
+  border-radius: var(--radius-lg);
+  background: rgba(255, 255, 255, .72);
+  color: var(--text-secondary);
+}
+
+.preview-empty strong,
+.results-empty strong {
+  color: var(--text-primary) !important;
+  font-size: 15px;
+}
+
+.preview-empty span,
+.results-empty span {
+  color: var(--text-secondary) !important;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.preview-icon {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  background: var(--accent-main-dim);
+  border: 1px solid var(--border-accent);
+  color: var(--accent-warm) !important;
+  font-size: 19px;
+}
+
+/* Keep results compact enough to remain alongside the preview. */
+.result-lab {
+  padding: 17px 18px !important;
+  margin-bottom: 10px !important;
+  border-radius: 15px !important;
+}
+
+.result-lab .result-heading {
+  font-size: clamp(18px, 1.7vw, 23px) !important;
+}
+
+.metric-lab {
+  padding: 13px 8px !important;
+  border-radius: 11px !important;
+}
+
+.metric-lab .metric-label {
+  font-size: 10px !important;
+  margin-bottom: 5px !important;
+}
+
+.metric-lab .metric-val {
+  font-size: clamp(19px, 1.8vw, 25px) !important;
+}
+
+[data-testid="stVideo"] video {
+  width: 100% !important;
+  max-height: 350px !important;
+  object-fit: contain !important;
+}
+
+[data-testid="stFileUploader"] {
+  padding: 12px !important;
+}
+
+[data-testid="stRadio"] [role="radiogroup"] label {
+  padding: 8px 15px !important;
+}
+
+/* Expression model cards and result details stay visually consistent. */
+[data-testid="stExpander"] {
+  border: 1px solid var(--border-subtle) !important;
+  border-radius: var(--radius-md) !important;
+  background: rgba(255,255,255,.72) !important;
+}
+
+[data-testid="stAlert"] {
+  padding: .7rem .9rem !important;
+}
+
+@media (max-width: 768px) {
+  .main .block-container {
+    padding: 1rem .85rem 1.8rem !important;
+  }
+
+  .hero-lab {
+    padding: 21px 18px !important;
+  }
+
+  .preview-empty,
+  .results-empty {
+    min-height: 155px;
+  }
+
+  [data-testid="stVideo"] video {
+    max-height: none !important;
+  }
+}
+
+/* ---------- Facial Expression Analysis Section ---------- */
+
+.expr-section-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 18px 0 12px 0;
+  padding: 10px 14px;
+  border-left: 3px solid var(--accent-main);
+  background: var(--bg-surface);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+
+.expr-card {
+  padding: 14px 16px;
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid var(--border-subtle);
+  margin-bottom: 10px;
+  box-shadow: 0 2px 8px rgba(139, 121, 103, 0.04);
+}
+
+.expr-card .expr-model-name {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+
+.expr-card .expr-primary-label {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--accent-warm);
+}
+
+.expr-card .expr-confidence {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  margin-left: 6px;
+}
+
+.expr-agreement {
+  padding: 8px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 600;
+  text-align: center;
+  margin: 8px 0 12px 0;
+}
+
+.expr-agreement.agree {
+  background: var(--safe-bg);
+  border: 1px solid var(--safe-border);
+  color: var(--safe-text);
+}
+
+.expr-agreement.disagree {
+  background: var(--danger-bg);
+  border: 1px solid var(--danger-border);
+  color: var(--danger-text);
+}
+
+.expr-dist-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.expr-dist-bar .expr-dist-label {
+  width: 75px;
+  text-align: right;
+  font-weight: 500;
+  flex-shrink: 0;
+}
+
+.expr-dist-bar .expr-dist-track {
+  flex: 1;
+  height: 8px;
+  background: rgba(139, 121, 103, 0.08);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.expr-dist-bar .expr-dist-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent-main), var(--accent-warm));
+  border-radius: 4px;
+  transition: width 0.3s ease;
+}
+
+.expr-dist-bar .expr-dist-pct {
+  width: 48px;
+  text-align: right;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.stress-section-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 20px 0 12px 0;
+  padding: 10px 14px;
+  border-left: 3px solid var(--accent-warm);
+  background: var(--bg-surface);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
