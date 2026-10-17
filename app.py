@@ -449,8 +449,10 @@ else:
                 ev = inf.analyze_live(bundle, frames, audio, sr)
 
                 alpha = CFG.ema_alpha
-                live_state.face = ema(live_state.face, ev.face_prob, alpha)
-                live_state.voice = ema(live_state.voice, ev.voice_prob, alpha)
+                if ev.face_prob is not None:
+                    live_state.face = ema(live_state.face, ev.face_prob, alpha)
+                if ev.voice_prob is not None:
+                    live_state.voice = ema(live_state.voice, ev.voice_prob, alpha)
 
                 render_result_block(
                     ev,
