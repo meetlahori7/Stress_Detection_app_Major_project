@@ -404,6 +404,7 @@ else:
             "Allow camera and microphone access. Keep your face in frame and speak "
             "for at least 2 seconds in each window."
         )
+        st.caption("Upload a video for better accuracy.")
         webrtc_ctx = webrtc_streamer(
             key="stress-live",
             mode=WebRtcMode.SENDRECV,
