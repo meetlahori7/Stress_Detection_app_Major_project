@@ -55,10 +55,10 @@
     });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
     renderer.setSize(width, height);
-    renderer.setClearColor(0xfcfbf8, 1); // Creamy white background
+    renderer.setClearColor(0xf5efe5, 1); // Slightly darker warm background
 
     const scene = new THREE.Scene();
-    scene.fog = new THREE.FogExp2(0xfcfbf8, 0.0016);
+    scene.fog = new THREE.FogExp2(0xf5efe5, 0.0016);
 
     const camera = new THREE.PerspectiveCamera(55, width / height, 1, 2000);
     camera.position.set(0, 0, 420);
@@ -288,7 +288,7 @@
     }
 
     function draw() {
-      ctx.fillStyle = '#fcfbf8'; // Creamy white background
+      ctx.fillStyle = '#f5efe5'; // Slightly darker warm background
       ctx.fillRect(0, 0, w, h);
 
       for (let i = 0; i < numNodes; i++) {

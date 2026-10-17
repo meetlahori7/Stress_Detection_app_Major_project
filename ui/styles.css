@@ -5,9 +5,9 @@
 
 /* ---------- CSS Custom Properties ---------- */
 :root {
-  --bg-primary:     #fcfbf8;
-  --bg-secondary:   rgba(252, 251, 248, 0.92);
-  --bg-surface:     rgba(255, 255, 255, 0.75);
+  --bg-primary:     #f5efe5;
+  --bg-secondary:   rgba(245, 239, 229, 0.92);
+  --bg-surface:     rgba(255, 255, 255, 0.86);
   --bg-elevated:    rgba(255, 255, 255, 0.95);
 
   --text-primary:   #3b332b;
@@ -50,6 +50,7 @@
   z-index: 0 !important;
   pointer-events: none !important;
   display: block !important;
+  filter: brightness(0.93) saturate(0.92) contrast(1.02) !important;
 }
 
 /* Ensure stHtml wrapper never creates a layout box or overlay */
@@ -837,6 +838,13 @@ header[data-testid="stHeader"] *,
   max-width: 1440px !important;
   padding-top: 1.35rem !important;
   padding-bottom: 2rem !important;
+  padding-left: 1rem !important;
+  padding-right: 1rem !important;
+  border-radius: 24px !important;
+  background: rgba(251, 247, 240, 0.72) !important;
+  border: 1px solid rgba(139, 121, 103, 0.14) !important;
+  backdrop-filter: blur(5px) !important;
+  -webkit-backdrop-filter: blur(5px) !important;
 }
 
 .hero-lab {
@@ -857,7 +865,7 @@ header[data-testid="stHeader"] *,
 
 .panel-kicker {
   color: var(--accent-warm) !important;
-  font-size: 11px !important;
+  font-size: 12px !important;
   font-weight: 800 !important;
   letter-spacing: .1em !important;
   margin: 0 0 10px !important;
@@ -866,13 +874,13 @@ header[data-testid="stHeader"] *,
 
 .live-upload-tip {
   margin: 12px 0 10px;
-  padding: 10px 12px;
+  padding: 12px 14px;
   border-radius: var(--radius-sm);
-  background: #fff59d;
-  border: 1px solid #f0d43a;
-  color: #c62828;
-  font-size: 18px;
-  font-weight: 800;
+  background: #fff2bf;
+  border: 1px solid #eac56a;
+  color: #9c3b2a;
+  font-size: 16px;
+  font-weight: 700;
   line-height: 1.35;
 }
 
@@ -888,7 +896,7 @@ header[data-testid="stHeader"] *,
   text-align: center;
   border: 1px dashed rgba(171, 121, 70, .35);
   border-radius: var(--radius-lg);
-  background: rgba(255, 255, 255, .72);
+  background: rgba(255, 255, 255, .84);
   color: var(--text-secondary);
 }
 
@@ -922,6 +930,9 @@ header[data-testid="stHeader"] *,
   padding: 17px 18px !important;
   margin-bottom: 10px !important;
   border-radius: 15px !important;
+  background: rgba(255, 255, 255, 0.9) !important;
+  border: 1px solid rgba(139, 121, 103, 0.16) !important;
+  box-shadow: 0 8px 20px rgba(117, 91, 48, 0.08) !important;
 }
 
 .result-lab .result-heading {
@@ -931,6 +942,9 @@ header[data-testid="stHeader"] *,
 .metric-lab {
   padding: 13px 8px !important;
   border-radius: 11px !important;
+  background: rgba(255, 255, 255, 0.92) !important;
+  border-color: rgba(139, 121, 103, 0.18) !important;
+  box-shadow: 0 5px 16px rgba(117, 91, 48, 0.07) !important;
 }
 
 .metric-lab .metric-label {
