@@ -128,6 +128,35 @@ def decide(p: Optional[float], cfg: Config) -> Decision:
     )
 
 
+def decide_live(p_face: Optional[float], p_voice: Optional[float], cfg: Config) -> Decision:
+    """Live-mode decision with graceful fallback when one modality is missing."""
+    if p_face is not None and p_voice is not None:
+        return decide(fuse(p_face, p_voice, cfg), cfg)
+    if p_face is None and p_voice is None:
+        return Decision(
+            LABEL_INCONCLUSIVE,
+            None,
+            "Collecting face and voice signals. Keep your face visible and continue speaking.",
+        )
+
+    if p_face is not None:
+        base = decide(p_face, cfg)
+        return Decision(
+            base.label,
+            base.probability,
+            "Live fallback used face-only confidence because voice was unavailable. "
+            + base.reason.replace("Fusion score", "Face score"),
+        )
+
+    base = decide(p_voice, cfg)
+    return Decision(
+        base.label,
+        base.probability,
+        "Live fallback used voice-only confidence because face was unavailable. "
+        + base.reason.replace("Fusion score", "Voice score"),
+    )
+
+
 def ema(previous: Optional[float], value: Optional[float], alpha: float) -> Optional[float]:
     """Exponential moving average for live smoothing.
 
