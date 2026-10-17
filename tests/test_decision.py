@@ -18,6 +18,7 @@ from decision import (  # noqa: E402
     Config,
     audio_long_enough,
     decide,
+    decide_live,
     ema,
     face_quality_problems,
     fuse,
@@ -67,6 +68,34 @@ class TestDecision(unittest.TestCase):
 
     def test_missing_score_is_unavailable(self):
         self.assertEqual(decide(None, Config()).label, LABEL_UNAVAILABLE)
+
+
+class TestLiveDecision(unittest.TestCase):
+    def test_uses_fusion_when_both_available(self):
+        cfg = Config(band=0.0)
+        d = decide_live(0.3, 0.7, cfg)
+        self.assertEqual(d.label, LABEL_STRESS)
+        self.assertIn("Fusion score", d.reason)
+
+    def test_face_only_fallback(self):
+        cfg = Config(band=0.0)
+        d = decide_live(0.2, None, cfg)
+        self.assertEqual(d.label, LABEL_NO_STRESS)
+        self.assertIn("face-only", d.reason)
+        self.assertIn("Face score", d.reason)
+
+    def test_voice_only_fallback(self):
+        cfg = Config(band=0.0)
+        d = decide_live(None, 0.8, cfg)
+        self.assertEqual(d.label, LABEL_STRESS)
+        self.assertIn("voice-only", d.reason)
+        self.assertIn("Voice score", d.reason)
+
+    def test_both_missing_is_collecting(self):
+        d = decide_live(None, None, Config())
+        self.assertEqual(d.label, LABEL_INCONCLUSIVE)
+        self.assertIsNone(d.probability)
+        self.assertIn("Collecting", d.reason)
 
 
 class TestConfig(unittest.TestCase):

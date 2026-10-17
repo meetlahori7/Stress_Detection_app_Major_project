@@ -29,6 +29,7 @@ from decision import (  # noqa: E402
     LABEL_UNAVAILABLE,
     Decision,
     decide,
+    decide_live,
     ema,
     fuse,
 )
@@ -182,8 +183,10 @@ class AudioProcessor:
 # Decision and rendering
 # =============================================================================
 
-def make_decision(face, voice) -> Decision:
+def make_decision(face, voice, live_mode: bool = False) -> Decision:
     """Missing modalities produce an explicit reason, never a silent fallback."""
+    if live_mode:
+        return decide_live(face, voice, CFG)
     fusion = fuse(face, voice, CFG)
     if fusion is None:
         missing = []
@@ -312,7 +315,7 @@ def render_result_block(ev: Evidence, smoothed_face=None, smoothed_voice=None, s
     face = smoothed_face if smoothed else ev.face_prob
     voice = smoothed_voice if smoothed else ev.voice_prob
     fusion = fuse(face, voice, CFG)
-    decision = make_decision(face, voice)
+    decision = make_decision(face, voice, live_mode=smoothed)
     render_decision(decision, face, voice, fusion, ev, smoothed)
     render_expression(ev.expression)
 
