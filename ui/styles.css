@@ -864,6 +864,18 @@ header[data-testid="stHeader"] *,
   text-transform: uppercase !important;
 }
 
+.live-upload-tip {
+  margin: 12px 0 10px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: #fff59d;
+  border: 1px solid #f0d43a;
+  color: #c62828;
+  font-size: 18px;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
 .preview-empty,
 .results-empty {
   min-height: 230px;

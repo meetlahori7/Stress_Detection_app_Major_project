@@ -404,7 +404,10 @@ else:
             "Allow camera and microphone access. Keep your face in frame and speak "
             "for at least 2 seconds in each window."
         )
-        st.caption("Upload a video for better accuracy.")
+        st.markdown(
+            '<div class="live-upload-tip">Upload a video for better accuracy.</div>',
+            unsafe_allow_html=True,
+        )
         webrtc_ctx = webrtc_streamer(
             key="stress-live",
             mode=WebRtcMode.SENDRECV,
