@@ -354,50 +354,52 @@ if mode == "📁 Upload Video":
         help="Use a clear, front-facing face and audible speech of at least 2 seconds.",
     )
 
-    left, right = st.columns([0.92, 1.08], gap="large")
+    left, right = st.columns([1, 1], gap="medium")
 
     with left:
-        st.markdown('<div class="panel-kicker">01 · VIDEO PREVIEW</div>', unsafe_allow_html=True)
-        if uploaded is not None:
-            st.video(uploaded)
-            if st.button("Analyze video", type="primary", use_container_width=True):
-                with st.spinner("Analyzing face frames and speech..."):
-                    path = None
-                    try:
-                        suffix = os.path.splitext(uploaded.name)[1] or ".mp4"
-                        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-                            tmp.write(uploaded.getvalue())
-                            path = tmp.name
-                        ev = inf.analyze_video(bundle, path)
-                        st.session_state["upload_result"] = {
-                            "signature": (uploaded.name, uploaded.size),
-                            "evidence": ev,
-                        }
-                    except Exception as exc:
-                        st.error("Video analysis failed.")
-                        st.exception(exc)
-                    finally:
-                        if path and os.path.exists(path):
-                            os.remove(path)
-        else:
-            st.markdown(
-                '<div class="preview-empty"><div class="preview-icon">▶</div>'
-                '<strong>Your video preview</strong><span>Upload a video above to begin.</span></div>',
-                unsafe_allow_html=True,
-            )
+        with st.container(border=True):
+            st.markdown('<div class="panel-kicker">01 · VIDEO PREVIEW</div>', unsafe_allow_html=True)
+            if uploaded is not None:
+                st.video(uploaded)
+                if st.button("Analyze video", type="primary", use_container_width=True):
+                    with st.spinner("Analyzing face frames and speech..."):
+                        path = None
+                        try:
+                            suffix = os.path.splitext(uploaded.name)[1] or ".mp4"
+                            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+                                tmp.write(uploaded.getvalue())
+                                path = tmp.name
+                            ev = inf.analyze_video(bundle, path)
+                            st.session_state["upload_result"] = {
+                                "signature": (uploaded.name, uploaded.size),
+                                "evidence": ev,
+                            }
+                        except Exception as exc:
+                            st.error("Video analysis failed.")
+                            st.exception(exc)
+                        finally:
+                            if path and os.path.exists(path):
+                                os.remove(path)
+            else:
+                st.markdown(
+                    '<div class="preview-empty"><div class="preview-icon">▶</div>'
+                    '<strong>Your video preview</strong><span>Upload a video above to begin.</span></div>',
+                    unsafe_allow_html=True,
+                )
 
     with right:
-        st.markdown('<div class="panel-kicker">02 · ANALYSIS RESULTS</div>', unsafe_allow_html=True)
-        saved = st.session_state.get("upload_result")
-        if saved and uploaded is not None and saved["signature"] == (uploaded.name, uploaded.size):
-            render_result_block(saved["evidence"])
-        else:
-            st.markdown(
-                '<div class="results-empty"><div class="preview-icon">✳</div>'
-                '<strong>Results will appear here</strong>'
-                '<span>Upload a video, then select <b>Analyze video</b>.</span></div>',
-                unsafe_allow_html=True,
-            )
+        with st.container(border=True):
+            st.markdown('<div class="panel-kicker">02 · ANALYSIS RESULTS</div>', unsafe_allow_html=True)
+            saved = st.session_state.get("upload_result")
+            if saved and uploaded is not None and saved["signature"] == (uploaded.name, uploaded.size):
+                render_result_block(saved["evidence"])
+            else:
+                st.markdown(
+                    '<div class="results-empty"><div class="preview-icon">✳</div>'
+                    '<strong>Results will appear here</strong>'
+                    '<span>Upload a video, then select <b>Analyze video</b>.</span></div>',
+                    unsafe_allow_html=True,
+                )
 
     render_model_details()
 
@@ -409,96 +411,98 @@ if mode == "📁 Upload Video":
 else:
     st.markdown('<div class="section-lab">Live Camera &amp; Microphone</div>', unsafe_allow_html=True)
 
-    left, right = st.columns([0.92, 1.08], gap="large")
+    left, right = st.columns([1, 1], gap="medium")
 
     with left:
-        st.markdown('<div class="panel-kicker">01 · LIVE PREVIEW</div>', unsafe_allow_html=True)
-        st.info(
-            "Allow camera and microphone access. Keep your face in frame and speak "
-            "for at least 2 seconds in each window."
-        )
-        st.markdown(
-            '<div class="live-upload-tip">Upload a video for better accuracy.</div>',
-            unsafe_allow_html=True,
-        )
-        webrtc_ctx = webrtc_streamer(
-            key="stress-live",
-            mode=WebRtcMode.SENDRECV,
-            video_processor_factory=lambda: VideoProcessor(live_state),
-            audio_processor_factory=lambda: AudioProcessor(live_state),
-            media_stream_constraints={
-                "video": {
-                    "width": {
-                        "ideal": LIVE_CAPTURE_WIDTH,
-                        "min": 480,
-                        "max": LIVE_CAPTURE_WIDTH,
-                    },
-                    "height": {
-                        "ideal": LIVE_CAPTURE_HEIGHT,
-                        "min": 360,
-                        "max": LIVE_CAPTURE_HEIGHT,
-                    },
-                    "frameRate": {"ideal": 20, "max": 20},
-                    "facingMode": {"ideal": "user"},
-                },
-                # Browser audio processing changes the spectrum the model was
-                # trained on, so it is turned off here. Test this choice.
-                "audio": {
-                    "echoCancellation": False,
-                    "noiseSuppression": False,
-                    "autoGainControl": False,
-                },
-            },
-            rtc_configuration={"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]},
-            async_processing=True,
-        )
-
-        is_playing = bool(webrtc_ctx.state.playing)
-        was_playing = st.session_state.get("live_was_playing", False)
-        if is_playing and not was_playing:
-            live_state.reset()
-        st.session_state.live_was_playing = is_playing
-
-    with right:
-        st.markdown('<div class="panel-kicker">02 · LIVE ANALYSIS</div>', unsafe_allow_html=True)
-
-        if is_playing:
-
-            @st.fragment(run_every=LIVE_REFRESH)
-            def live_panel():
-                frames, audio, sr = live_state.snapshot()
-                if not frames:
-                    st.info("Waiting for camera frames...")
-                    return
-
-                ev = inf.analyze_live(bundle, frames, audio, sr)
-
-                alpha = CFG.ema_alpha
-                # Passing None deliberately clears stale modality scores.
-                # Otherwise a temporarily lost face or voice signal can be
-                # fused with an old value and produce misleading decisions.
-                live_state.face = ema(live_state.face, ev.face_prob, alpha)
-                live_state.voice = ema(live_state.voice, ev.voice_prob, alpha)
-
-                render_result_block(
-                    ev,
-                    smoothed_face=live_state.face,
-                    smoothed_voice=live_state.voice,
-                    smoothed=True,
-                )
-                st.caption(
-                    f"Refreshes every 2 seconds. Scores are smoothed over recent windows "
-                    f"(alpha {alpha:.2f})."
-                )
-
-            live_panel()
-        else:
+        with st.container(border=True):
+            st.markdown('<div class="panel-kicker">01 · LIVE PREVIEW</div>', unsafe_allow_html=True)
+            st.info(
+                "Allow camera and microphone access. Keep your face in frame and speak "
+                "for at least 2 seconds in each window."
+            )
             st.markdown(
-                '<div class="results-empty"><div class="preview-icon">◉</div>'
-                '<strong>Live results will appear here</strong>'
-                '<span>Start the camera stream to begin analysis.</span></div>',
+                '<div class="live-upload-tip">Upload a video for better accuracy.</div>',
                 unsafe_allow_html=True,
             )
+            webrtc_ctx = webrtc_streamer(
+                key="stress-live",
+                mode=WebRtcMode.SENDRECV,
+                video_processor_factory=lambda: VideoProcessor(live_state),
+                audio_processor_factory=lambda: AudioProcessor(live_state),
+                media_stream_constraints={
+                    "video": {
+                        "width": {
+                            "ideal": LIVE_CAPTURE_WIDTH,
+                            "min": 480,
+                            "max": LIVE_CAPTURE_WIDTH,
+                        },
+                        "height": {
+                            "ideal": LIVE_CAPTURE_HEIGHT,
+                            "min": 360,
+                            "max": LIVE_CAPTURE_HEIGHT,
+                        },
+                        "frameRate": {"ideal": 20, "max": 20},
+                        "facingMode": {"ideal": "user"},
+                    },
+                    # Browser audio processing changes the spectrum the model was
+                    # trained on, so it is turned off here. Test this choice.
+                    "audio": {
+                        "echoCancellation": False,
+                        "noiseSuppression": False,
+                        "autoGainControl": False,
+                    },
+                },
+                rtc_configuration={"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]},
+                async_processing=True,
+            )
+
+            is_playing = bool(webrtc_ctx.state.playing)
+            was_playing = st.session_state.get("live_was_playing", False)
+            if is_playing and not was_playing:
+                live_state.reset()
+            st.session_state.live_was_playing = is_playing
+
+    with right:
+        with st.container(border=True):
+            st.markdown('<div class="panel-kicker">02 · LIVE ANALYSIS</div>', unsafe_allow_html=True)
+
+            if is_playing:
+
+                @st.fragment(run_every=LIVE_REFRESH)
+                def live_panel():
+                    frames, audio, sr = live_state.snapshot()
+                    if not frames:
+                        st.info("Waiting for camera frames...")
+                        return
+
+                    ev = inf.analyze_live(bundle, frames, audio, sr)
+
+                    alpha = CFG.ema_alpha
+                    # Passing None deliberately clears stale modality scores.
+                    # Otherwise a temporarily lost face or voice signal can be
+                    # fused with an old value and produce misleading decisions.
+                    live_state.face = ema(live_state.face, ev.face_prob, alpha)
+                    live_state.voice = ema(live_state.voice, ev.voice_prob, alpha)
+
+                    render_result_block(
+                        ev,
+                        smoothed_face=live_state.face,
+                        smoothed_voice=live_state.voice,
+                        smoothed=True,
+                    )
+                    st.caption(
+                        f"Refreshes every 2 seconds. Scores are smoothed over recent windows "
+                        f"(alpha {alpha:.2f})."
+                    )
+
+                live_panel()
+            else:
+                st.markdown(
+                    '<div class="results-empty"><div class="preview-icon">◉</div>'
+                    '<strong>Live results will appear here</strong>'
+                    '<span>Start the camera stream to begin analysis.</span></div>',
+                    unsafe_allow_html=True,
+                )
 
     render_model_details()
 
@@ -507,33 +511,31 @@ else:
 # How it works
 # =============================================================================
 
-st.divider()
-st.markdown('<div class="section-lab">How It Works</div>', unsafe_allow_html=True)
-
-_steps = [
-    ("01", "Capture", "🎬", "Upload a clip or use the camera and microphone."),
-    ("02", "Face", "👤", "Faces are detected, cropped with a 15% margin and encoded by ResNet-18 into 512 values. Low-quality frames are skipped."),
-    ("03", "Voice", "🎙️", "Speech is converted into 240 MFCC statistics. At least 2 seconds of speech are required."),
-    ("04", "Decide", "⚖️", "Face and voice probabilities are averaged 40/60. FERPlus and MobileFaceNet add a capped, agreement-aware expression signal; scores near the threshold are reported as inconclusive."),
-]
-_cols = st.columns(4)
-for col, (num, title, icon, text) in zip(_cols, _steps):
-    with col:
-        st.markdown(
-            f"""
-            <div style="padding: 16px 14px; border: 1px solid var(--border-subtle);
-                        border-top: 3px solid var(--accent-main); border-radius: var(--radius-md);
-                        background: var(--bg-surface); height: 100%;">
-              <div style="font-size: 11px; font-weight: 700; letter-spacing: 0.08em;
-                          color: var(--accent-warm); margin-bottom: 6px;">{num}</div>
-              <div style="font-size: 18px; margin-bottom: 4px;">{icon}</div>
-              <div style="font-size: 14px; font-weight: 700; color: var(--text-primary);
-                          margin-bottom: 8px;">{title}</div>
-              <div style="font-size: 13px; color: var(--text-secondary); line-height: 1.6;">{text}</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+with st.expander("How it works", expanded=False):
+    _steps = [
+        ("01", "Capture", "🎬", "Upload a clip or use the camera and microphone."),
+        ("02", "Face", "👤", "Faces are detected, cropped with a 15% margin and encoded by ResNet-18 into 512 values. Low-quality frames are skipped."),
+        ("03", "Voice", "🎙️", "Speech is converted into 240 MFCC statistics. At least 2 seconds of speech are required."),
+        ("04", "Decide", "⚖️", "Face and voice probabilities are averaged 40/60. FERPlus and MobileFaceNet add a capped, agreement-aware expression signal; scores near the threshold are reported as inconclusive."),
+    ]
+    _cols = st.columns(4)
+    for col, (num, title, icon, text) in zip(_cols, _steps):
+        with col:
+            st.markdown(
+                f"""
+                <div style="padding: 16px 14px; border: 1px solid var(--border-subtle);
+                            border-top: 3px solid var(--accent-main); border-radius: var(--radius-md);
+                            background: var(--bg-surface); height: 100%;">
+                  <div style="font-size: 11px; font-weight: 700; letter-spacing: 0.08em;
+                              color: var(--accent-warm); margin-bottom: 6px;">{num}</div>
+                  <div style="font-size: 18px; margin-bottom: 4px;">{icon}</div>
+                  <div style="font-size: 14px; font-weight: 700; color: var(--text-primary);
+                              margin-bottom: 8px;">{title}</div>
+                  <div style="font-size: 13px; color: var(--text-secondary); line-height: 1.6;">{text}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
 
 st.divider()
 st.caption(
