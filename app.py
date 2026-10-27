@@ -31,7 +31,7 @@ from decision import (  # noqa: E402
     decide,
     decide_live,
     ema,
-    fuse,
+    fuse_with_expression,
 )
 
 APP_TITLE = "AI Human Stress Detection"
@@ -186,11 +186,11 @@ class AudioProcessor:
 # Decision and rendering
 # =============================================================================
 
-def make_decision(face, voice, live_mode: bool = False) -> Decision:
+def make_decision(face, voice, expression=None, live_mode: bool = False) -> Decision:
     """Missing modalities produce an explicit reason, never a silent fallback."""
     if live_mode:
-        return decide_live(face, voice, CFG)
-    fusion = fuse(face, voice, CFG)
+        return decide_live(face, voice, CFG, expression)
+    fusion = fuse_with_expression(face, voice, expression, CFG)
     if fusion is None:
         missing = []
         if face is None:
@@ -250,7 +250,7 @@ def render_decision(decision: Decision, face, voice, fusion, ev, smoothed: bool)
 def render_expression(expr) -> None:
     st.markdown(
         '<div class="expr-section-title">🙂 Facial expression '
-        '(advisory, does not change the decision)</div>',
+        '(secondary evidence, bounded influence)</div>',
         unsafe_allow_html=True,
     )
     if not expr:
@@ -284,7 +284,8 @@ def render_expression(expr) -> None:
                 f'<div class="expr-primary-label">{expr["mobile_top"].title()}</div>',
                 unsafe_allow_html=True,
             )
-            st.caption("Label only, no calibrated probability")
+            prob = expr.get("mobile_probs", {}).get(expr["mobile_top"], 0.0)
+            st.caption(f"Confidence — {prob:.1%}")
         else:
             st.caption("Unavailable")
         st.markdown("</div>", unsafe_allow_html=True)
@@ -293,13 +294,19 @@ def render_expression(expr) -> None:
         st.markdown('<div class="expr-agreement agree">✓ The two expression models agree</div>', unsafe_allow_html=True)
     elif expr.get("agree") is False:
         st.markdown('<div class="expr-agreement disagree">✗ The two expression models disagree</div>', unsafe_allow_html=True)
-    st.caption("Expression is not the same as stress. The stress decision uses only the face and voice models.")
+    if expr.get("stress_signal") is not None:
+        st.caption(
+            f"Expression stress signal: {expr['stress_signal']:.1%}; "
+            f"decision influence: {expr.get('stress_influence', 0.0):.1%}. "
+            "This is a bounded secondary signal, not a clinical stress measure."
+        )
 
 
 def render_model_details() -> None:
     with st.expander("Model details"):
         st.write(
             f"Fusion: {CFG.face_weight:.2f} face + {CFG.voice_weight:.2f} voice, "
+            f"expression influence up to {CFG.expression_weight:.2f}, "
             f"threshold {CFG.threshold:.2f}, inconclusive band ±{CFG.band:.2f}"
         )
         st.write(
@@ -317,8 +324,8 @@ def render_model_details() -> None:
 def render_result_block(ev: Evidence, smoothed_face=None, smoothed_voice=None, smoothed=False) -> None:
     face = smoothed_face if smoothed else ev.face_prob
     voice = smoothed_voice if smoothed else ev.voice_prob
-    fusion = fuse(face, voice, CFG)
-    decision = make_decision(face, voice, live_mode=smoothed)
+    fusion = fuse_with_expression(face, voice, ev.expression, CFG)
+    decision = make_decision(face, voice, ev.expression, live_mode=smoothed)
     render_decision(decision, face, voice, fusion, ev, smoothed)
     render_expression(ev.expression)
 
@@ -507,7 +514,7 @@ _steps = [
     ("01", "Capture", "🎬", "Upload a clip or use the camera and microphone."),
     ("02", "Face", "👤", "Faces are detected, cropped with a 15% margin and encoded by ResNet-18 into 512 values. Low-quality frames are skipped."),
     ("03", "Voice", "🎙️", "Speech is converted into 240 MFCC statistics. At least 2 seconds of speech are required."),
-    ("04", "Decide", "⚖️", "Face and voice probabilities are averaged 40/60. Scores near the threshold are reported as inconclusive. Expression models are shown separately and never change the result."),
+    ("04", "Decide", "⚖️", "Face and voice probabilities are averaged 40/60. FERPlus and MobileFaceNet add a capped, agreement-aware expression signal; scores near the threshold are reported as inconclusive."),
 ]
 _cols = st.columns(4)
 for col, (num, title, icon, text) in zip(_cols, _steps):
@@ -530,6 +537,6 @@ for col, (num, title, icon, text) in zip(_cols, _steps):
 
 st.divider()
 st.caption(
-    "Face and voice fusion drives every decision. Expression models are advisory. "
+    "Face and voice fusion remains primary; FERPlus and MobileFaceNet provide bounded, agreement-aware secondary evidence. "
     "Labels are emotion-derived proxies, not clinical stress diagnoses."
 )

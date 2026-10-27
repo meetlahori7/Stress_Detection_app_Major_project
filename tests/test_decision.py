@@ -22,6 +22,7 @@ from decision import (  # noqa: E402
     ema,
     face_quality_problems,
     fuse,
+    fuse_with_expression,
     load_config,
     majority_label,
     sample_positions,
@@ -45,6 +46,25 @@ class TestFusion(unittest.TestCase):
     def test_rejects_nan(self):
         with self.assertRaises(ValueError):
             fuse(float("nan"), 0.2, Config())
+
+    def test_expression_signal_is_bounded_secondary_evidence(self):
+        cfg = Config(expression_weight=0.15)
+        expression = {"stress_signal": 1.0, "stress_influence": 0.15}
+        self.assertAlmostEqual(
+            fuse_with_expression(0.2, 0.2, expression, cfg),
+            0.32,
+        )
+
+    def test_expression_disagreement_reduces_influence(self):
+        cfg = Config(expression_weight=0.15)
+        expression = {"stress_signal": 1.0, "stress_influence": 0.15 * 0.35}
+        score = fuse_with_expression(0.2, 0.2, expression, cfg)
+        self.assertGreater(score, 0.2)
+        self.assertLess(score, 0.32)
+
+    def test_missing_expression_preserves_trained_fusion(self):
+        cfg = Config()
+        self.assertEqual(fuse_with_expression(0.3, 0.7, None, cfg), fuse(0.3, 0.7, cfg))
 
 
 class TestDecision(unittest.TestCase):

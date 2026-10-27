@@ -29,6 +29,7 @@ class Config:
     face_weight: float = 0.40
     voice_weight: float = 0.60
     threshold: float = 0.50
+    expression_weight: float = 0.15
 
     # Scores within +/- band of the threshold are reported as inconclusive.
     # The default is a guess. Tune it on validation data only.
@@ -54,6 +55,8 @@ class Config:
             raise ValueError("face_weight + voice_weight must equal 1.0")
         if not 0.0 < self.threshold < 1.0:
             raise ValueError("threshold must be between 0 and 1")
+        if not 0.0 <= self.expression_weight <= 0.30:
+            raise ValueError("expression_weight must be between 0 and 0.30")
         if not 0.0 <= self.band < 0.5:
             raise ValueError("band must be in [0, 0.5)")
         if not 0.0 < self.ema_alpha <= 1.0:
@@ -66,6 +69,7 @@ _JSON_KEYS = {
     "face_weight": "face_weight",
     "voice_weight": "voice_weight",
     "threshold": "threshold",
+    "expression_weight": "expression_weight",
     "face_dim": "face_feature_dimension",
     "voice_dim": "voice_feature_dimension",
 }
@@ -105,6 +109,34 @@ def fuse(p_face: Optional[float], p_voice: Optional[float], cfg: Config) -> Opti
     return cfg.face_weight * p_face + cfg.voice_weight * p_voice
 
 
+def fuse_with_expression(
+    p_face: Optional[float],
+    p_voice: Optional[float],
+    expression: Optional[dict],
+    cfg: Config,
+) -> Optional[float]:
+    """Blend a bounded expression stress signal into trained multimodal fusion.
+
+    The face/voice model remains the primary signal. Expression influence is
+    supplied by inference only after model availability and disagreement have
+    been assessed, so missing or contradictory expression evidence cannot
+    silently become a full decision.
+    """
+    base = fuse(p_face, p_voice, cfg)
+    if base is None or not expression:
+        return base
+
+    signal = expression.get("stress_signal")
+    influence = expression.get("stress_influence")
+    if signal is None or influence is None:
+        return base
+    if not math.isfinite(float(signal)) or not 0.0 <= float(signal) <= 1.0:
+        raise ValueError(f"invalid expression stress signal: {signal!r}")
+    if not math.isfinite(float(influence)) or not 0.0 <= float(influence) <= cfg.expression_weight:
+        raise ValueError(f"invalid expression influence: {influence!r}")
+    return (1.0 - float(influence)) * base + float(influence) * float(signal)
+
+
 def decide(p: Optional[float], cfg: Config) -> Decision:
     if p is None:
         return Decision(LABEL_UNAVAILABLE, None, "No decision was made.")
@@ -128,10 +160,15 @@ def decide(p: Optional[float], cfg: Config) -> Decision:
     )
 
 
-def decide_live(p_face: Optional[float], p_voice: Optional[float], cfg: Config) -> Decision:
+def decide_live(
+    p_face: Optional[float],
+    p_voice: Optional[float],
+    cfg: Config,
+    expression: Optional[dict] = None,
+) -> Decision:
     """Live-mode decision with graceful fallback when one modality is missing."""
     if p_face is not None and p_voice is not None:
-        return decide(fuse(p_face, p_voice, cfg), cfg)
+        return decide(fuse_with_expression(p_face, p_voice, expression, cfg), cfg)
     if p_face is None and p_voice is None:
         return Decision(
             LABEL_INCONCLUSIVE,
