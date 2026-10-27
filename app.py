@@ -37,9 +37,11 @@ from decision import (  # noqa: E402
 APP_TITLE = "AI Human Stress Detection"
 UI_DIR = os.path.join(BASE_DIR, "ui")
 
-LIVE_BUFFER_FRAMES = 60          # about 2 seconds at 30 fps
+LIVE_BUFFER_FRAMES = 60          # recent frames used for live sampling
 LIVE_AUDIO_WINDOW_S = 3.0
 LIVE_REFRESH = "2s"
+LIVE_CAPTURE_WIDTH = 640
+LIVE_CAPTURE_HEIGHT = 480
 
 st.set_page_config(
     page_title=APP_TITLE,
@@ -162,6 +164,7 @@ class VideoProcessor:
         self.state = state
 
     def recv(self, frame):
+        # Keep capture frames bounded and small enough for responsive inference.
         img = frame.to_ndarray(format="bgr24")
         self.state.add_frame(inf.limit_width(img))
         return frame
@@ -418,9 +421,17 @@ else:
             audio_processor_factory=lambda: AudioProcessor(live_state),
             media_stream_constraints={
                 "video": {
-                    "width": {"ideal": 1280, "min": 640},
-                    "height": {"ideal": 720, "min": 360},
-                    "frameRate": {"ideal": 30, "max": 30},
+                    "width": {
+                        "ideal": LIVE_CAPTURE_WIDTH,
+                        "min": 480,
+                        "max": LIVE_CAPTURE_WIDTH,
+                    },
+                    "height": {
+                        "ideal": LIVE_CAPTURE_HEIGHT,
+                        "min": 360,
+                        "max": LIVE_CAPTURE_HEIGHT,
+                    },
+                    "frameRate": {"ideal": 20, "max": 20},
                     "facingMode": {"ideal": "user"},
                 },
                 # Browser audio processing changes the spectrum the model was
@@ -456,10 +467,11 @@ else:
                 ev = inf.analyze_live(bundle, frames, audio, sr)
 
                 alpha = CFG.ema_alpha
-                if ev.face_prob is not None:
-                    live_state.face = ema(live_state.face, ev.face_prob, alpha)
-                if ev.voice_prob is not None:
-                    live_state.voice = ema(live_state.voice, ev.voice_prob, alpha)
+                # Passing None deliberately clears stale modality scores.
+                # Otherwise a temporarily lost face or voice signal can be
+                # fused with an old value and produce misleading decisions.
+                live_state.face = ema(live_state.face, ev.face_prob, alpha)
+                live_state.voice = ema(live_state.voice, ev.voice_prob, alpha)
 
                 render_result_block(
                     ev,
