@@ -25,7 +25,6 @@ from decision import (
     audio_long_enough,
     face_quality_problems,
     load_config,
-    majority_label,
     sample_positions,
 )
 
@@ -67,6 +66,16 @@ MOBILEFER_REFERENCE = np.array(
     ],
     dtype=np.float32,
 )
+EXPRESSION_STRESS_RELEVANCE = {
+    "neutral": 0.05,
+    "happy": 0.02,
+    "surprise": 0.45,
+    "sad": 0.65,
+    "angry": 0.80,
+    "disgust": 0.60,
+    "fear": 0.90,
+    "contempt": 0.40,
+}
 
 
 @dataclass
@@ -282,7 +291,7 @@ def fer_probabilities(b: Bundle, crop_bgr: np.ndarray) -> Dict[str, float]:
     return {label: float(p[i]) for i, label in enumerate(FER_LABELS)}
 
 
-def mobilefer_label(b: Bundle, face: FaceCrop) -> str:
+def mobilefer_probabilities(b: Bundle, face: FaceCrop) -> Dict[str, float]:
     aligned = _align_for_mobilefer(face.frame_bgr, face.landmarks)
     if aligned is None:
         raise RuntimeError("face alignment failed")
@@ -297,21 +306,31 @@ def mobilefer_label(b: Bundle, face: FaceCrop) -> str:
             f"MobileFaceNet returned {scores.size} class scores, "
             f"expected {len(MOBILEFER_LABELS)}"
         )
-    # OpenCV Zoo's `label` output is a vector of seven class scores; choose
-    # the highest-scoring class rather than casting the first score to int.
-    idx = int(np.argmax(scores))
-    if not 0 <= idx < len(MOBILEFER_LABELS):
-        raise RuntimeError(f"MobileFaceNet label index {idx} out of range")
-    return MOBILEFER_LABELS[idx]
+    return {
+        label: float(prob)
+        for label, prob in zip(MOBILEFER_LABELS, _softmax(scores))
+    }
+
+
+def _expression_stress_signal(probabilities: Dict[str, Dict[str, float]]) -> float:
+    signals = []
+    for distribution in probabilities.values():
+        signals.append(
+            sum(
+                float(probability) * EXPRESSION_STRESS_RELEVANCE[label]
+                for label, probability in distribution.items()
+            )
+        )
+    return float(np.mean(signals))
 
 
 def _expression_summary(b: Bundle, faces: List[FaceCrop], notes: List[str]) -> Optional[Dict]:
-    """Advisory only. Never read by the decision logic."""
+    """Build expression context and a bounded secondary stress signal."""
     if b.fer is None and b.mobilefer is None:
         return None
 
     fer_runs: List[Dict[str, float]] = []
-    mobile_labels: List[str] = []
+    mobile_runs: List[Dict[str, float]] = []
     for face in faces:
         if b.fer is not None:
             try:
@@ -320,19 +339,43 @@ def _expression_summary(b: Bundle, faces: List[FaceCrop], notes: List[str]) -> O
                 notes.append(f"FERPlus failed on a frame: {exc}")
         if b.mobilefer is not None:
             try:
-                mobile_labels.append(mobilefer_label(b, face))
+                mobile_runs.append(mobilefer_probabilities(b, face))
             except Exception as exc:
                 notes.append(f"MobileFaceNet failed on a frame: {exc}")
 
-    result: Dict = {"fer_top": None, "fer_probs": {}, "mobile_top": None, "agree": None}
+    result: Dict = {
+        "fer_top": None,
+        "fer_probs": {},
+        "mobile_top": None,
+        "mobile_probs": {},
+        "agree": None,
+        "stress_signal": None,
+        "stress_influence": 0.0,
+    }
     if fer_runs:
         mean = {k: float(np.mean([run[k] for run in fer_runs])) for k in FER_LABELS}
         result["fer_probs"] = mean
         result["fer_top"] = max(mean, key=mean.get)
-    if mobile_labels:
-        result["mobile_top"] = majority_label(mobile_labels)
+    if mobile_runs:
+        result["mobile_probs"] = {
+            label: float(np.mean([run[label] for run in mobile_runs]))
+            for label in MOBILEFER_LABELS
+        }
+        result["mobile_top"] = max(result["mobile_probs"], key=result["mobile_probs"].get)
     if result["fer_top"] and result["mobile_top"]:
         result["agree"] = result["fer_top"] == result["mobile_top"]
+
+    distributions = {}
+    if result["fer_probs"]:
+        distributions["FERPlus"] = result["fer_probs"]
+    if result["mobile_probs"]:
+        distributions["MobileFaceNet"] = result["mobile_probs"]
+    if distributions:
+        result["stress_signal"] = _expression_stress_signal(distributions)
+        # Agreement is a reliability gate, not a label override. When the
+        # models disagree, retain the evidence but reduce its influence.
+        agreement_factor = 1.0 if result["agree"] is not False else 0.35
+        result["stress_influence"] = b.cfg.expression_weight * agreement_factor
 
     if result["fer_top"] is None and result["mobile_top"] is None:
         return None
